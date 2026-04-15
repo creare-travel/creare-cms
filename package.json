@@ -2,8 +2,9 @@
   "name": "creare-cms",
   "version": "0.1.0",
   "private": true,
+  "description": "A Strapi application",
   "scripts": {
-    "build": "echo 'skip build'",
+    "build": "strapi build",
     "start": "strapi start"
   },
   "dependencies": {
@@ -11,7 +12,12 @@
     "@strapi/plugin-users-permissions": "5.42.0",
     "@strapi/plugin-cloud": "5.42.0",
     "better-sqlite3": "12.8.0",
-    "esbuild": "0.19.12"
+    "esbuild": "0.19.12",
+    "vite": "^5.0.0",
+    "react": "^18.0.0",
+    "react-dom": "^18.0.0",
+    "react-router-dom": "^6.0.0",
+    "styled-components": "^6.0.0"
   },
   "engines": {
     "node": "20.x"
