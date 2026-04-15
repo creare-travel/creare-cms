@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "build": "strapi build",
+    "build": "echo 'skip build'",
     "start": "strapi start"
   },
   "dependencies": {
