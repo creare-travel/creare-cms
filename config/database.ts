@@ -4,7 +4,11 @@ export default ({ env }: { env: any }): Core.Config.Database => ({
   connection: {
     client: 'postgres',
     connection: {
-      connectionString: env('DATABASE_URL'),
+      host: env('PGHOST'),
+      port: env.int('PGPORT'),
+      database: env('PGDATABASE'),
+      user: env('PGUSER'),
+      password: env('PGPASSWORD'),
       ssl: {
         rejectUnauthorized: false,
       },
