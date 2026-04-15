@@ -11,7 +11,7 @@
     "@strapi/plugin-users-permissions": "5.42.0",
     "@strapi/plugin-cloud": "5.42.0",
     "better-sqlite3": "12.8.0",
-    "esbuild": "^0.19.0"
+    "esbuild": "0.19.12"
   },
   "engines": {
     "node": "20.x"
