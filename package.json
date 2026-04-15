@@ -4,8 +4,10 @@
   "private": true,
   "description": "A Strapi application",
   "scripts": {
-    "build": "strapi build",
-    "start": "strapi start"
+    "clean": "rm -rf .cache build dist .strapi .tmp",
+    "build": "npm run clean && strapi build",
+    "start": "strapi start",
+    "develop": "strapi develop"
   },
   "dependencies": {
     "@strapi/strapi": "5.42.0",

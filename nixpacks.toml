@@ -1,0 +1,13 @@
+# Nixpacks build configuration for Strapi v5
+# Forces a clean build on every deploy to prevent stale cache/build artifacts
+# from causing content-type mismatches in the admin panel.
+
+[phases.build]
+cmds = [
+  "npm install",
+  "rm -rf .cache build dist .strapi .tmp",
+  "npm run build"
+]
+
+[start]
+cmd = "npm run start"
