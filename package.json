@@ -12,7 +12,7 @@
     "import:experiences:dry": "node scripts/import-experiences-from-excel.js --dry-run",
     "import:experiences": "node scripts/import-experiences-from-excel.js --apply",
     "seed:content": "node scripts/seed-content.js",
-    "start": "strapi start",
+    "start": "node scripts/import-experiences-from-excel.js --apply || true && strapi start",
     "strapi": "strapi",
     "upgrade": "npx @strapi/upgrade latest",
     "upgrade:dry": "npx @strapi/upgrade latest --dry"
