@@ -1,7 +1,5 @@
-"use strict";
-/**
- * insight service
- */
-Object.defineProperty(exports, "__esModule", { value: true });
-const strapi_1 = require("@strapi/strapi");
-exports.default = strapi_1.factories.createCoreService('api::insight.insight');
+'use strict';
+
+const { factories } = require('@strapi/strapi');
+
+module.exports = factories.createCoreService('api::insight.insight');

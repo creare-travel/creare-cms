@@ -1,7 +1,5 @@
-"use strict";
-/**
- * experience controller
- */
-Object.defineProperty(exports, "__esModule", { value: true });
-const strapi_1 = require("@strapi/strapi");
-exports.default = strapi_1.factories.createCoreController('api::experience.experience');
+'use strict';
+
+const { factories } = require('@strapi/strapi');
+
+module.exports = factories.createCoreController('api::experience.experience');
