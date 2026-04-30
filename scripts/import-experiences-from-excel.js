@@ -372,7 +372,7 @@ const buildPayload = (raw, warnings) => {
   const title = normalizeString(raw.title);
   const slug = slugify(title);
   const category = normalizeCategory(raw.category, warnings, title || '(missing title)');
-  const status = normalizeStatus(raw.status, warnings, title || '(missing title)');
+  const visibilityStatus = normalizeStatus(raw.status, warnings, title || '(missing title)');
   const experienceType = normalizeExperienceType(
     raw.experience_type,
     warnings,
@@ -403,7 +403,7 @@ const buildPayload = (raw, warnings) => {
     seo_description: normalizeString(raw.seo_description) || undefined,
     location: normalizeString(raw.location) || undefined,
     experience_flow: toBlocks(raw.experience_flow),
-    status,
+    visibility_status: visibilityStatus,
     priority: parsePriority(raw.priority),
     highlights: toBlocks(raw.highlights),
     wow_moment: normalizeString(raw.wow_moment) || undefined,
@@ -515,7 +515,7 @@ const upsertExperience = async (strapi, existingRecord, payload, destination) =>
     seo_description: payload.seo_description,
     location: payload.location,
     experience_flow: payload.experience_flow,
-    status: payload.status,
+    visibility_status: payload.visibility_status,
     priority: payload.priority,
     highlights: payload.highlights,
     wow_moment: payload.wow_moment,
@@ -536,7 +536,7 @@ const upsertExperience = async (strapi, existingRecord, payload, destination) =>
     });
   }
 
-  if (payload.status === 'active') {
+  if (payload.visibility_status === 'active') {
     await service.publish({ documentId: result.documentId });
   } else {
     await service.unpublish({ documentId: result.documentId }).catch(() => undefined);
