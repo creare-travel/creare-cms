@@ -1,0 +1,19 @@
+{
+    "collectionName": "components_destination_sections",
+    "info": {
+        "displayName": "Section",
+        "description": "Ordered editorial section for destination storytelling"
+    },
+    "options": {},
+    "attributes": {
+        "section_number": {
+            "type": "integer"
+        },
+        "title": {
+            "type": "string"
+        },
+        "body": {
+            "type": "richtext"
+        }
+    }
+}
