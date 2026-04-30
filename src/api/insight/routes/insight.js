@@ -1,7 +1,5 @@
-"use strict";
-/**
- * insight router
- */
-Object.defineProperty(exports, "__esModule", { value: true });
-const strapi_1 = require("@strapi/strapi");
-exports.default = strapi_1.factories.createCoreRouter('api::insight.insight');
+'use strict';
+
+const { factories } = require('@strapi/strapi');
+
+module.exports = factories.createCoreRouter('api::insight.insight');
