@@ -52,6 +52,14 @@
                 }
             }
         },
+        "one_line_hook": {
+            "type": "text",
+            "pluginOptions": {
+                "i18n": {
+                    "localized": true
+                }
+            }
+        },
         "destination": {
             "type": "relation",
             "relation": "manyToOne",
@@ -91,6 +99,14 @@
             }
         },
         "audience": {
+            "type": "blocks",
+            "pluginOptions": {
+                "i18n": {
+                    "localized": true
+                }
+            }
+        },
+        "designed_for": {
             "type": "blocks",
             "pluginOptions": {
                 "i18n": {
@@ -173,6 +189,30 @@
                 }
             }
         },
+        "cta_label": {
+            "type": "string",
+            "pluginOptions": {
+                "i18n": {
+                    "localized": true
+                }
+            }
+        },
+        "location": {
+            "type": "string",
+            "pluginOptions": {
+                "i18n": {
+                    "localized": true
+                }
+            }
+        },
+        "experience_flow": {
+            "type": "blocks",
+            "pluginOptions": {
+                "i18n": {
+                    "localized": true
+                }
+            }
+        },
         "gallery": {
             "type": "media",
             "pluginOptions": {
@@ -198,6 +238,42 @@
         },
         "seo_description": {
             "type": "string",
+            "pluginOptions": {
+                "i18n": {
+                    "localized": true
+                }
+            }
+        },
+        "status": {
+            "type": "enumeration",
+            "enum": [
+                "draft",
+                "active",
+                "hidden"
+            ],
+            "default": "draft"
+        },
+        "priority": {
+            "type": "integer"
+        },
+        "highlights": {
+            "type": "blocks",
+            "pluginOptions": {
+                "i18n": {
+                    "localized": true
+                }
+            }
+        },
+        "wow_moment": {
+            "type": "text",
+            "pluginOptions": {
+                "i18n": {
+                    "localized": true
+                }
+            }
+        },
+        "differentiator": {
+            "type": "text",
             "pluginOptions": {
                 "i18n": {
                     "localized": true

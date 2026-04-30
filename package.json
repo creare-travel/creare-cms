@@ -9,6 +9,8 @@
     "deploy": "strapi deploy",
     "dev": "strapi develop",
     "develop": "strapi develop",
+    "import:experiences:dry": "node scripts/import-experiences-from-excel.js --dry-run",
+    "import:experiences": "node scripts/import-experiences-from-excel.js --apply",
     "seed:content": "node scripts/seed-content.js",
     "start": "strapi start",
     "strapi": "strapi",
@@ -26,7 +28,8 @@
     "react": "^18.0.0",
     "react-dom": "^18.0.0",
     "react-router-dom": "^6.0.0",
-    "styled-components": "^6.0.0"
+    "styled-components": "^6.0.0",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@types/node": "^20",
