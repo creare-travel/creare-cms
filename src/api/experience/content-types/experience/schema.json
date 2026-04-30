@@ -106,6 +106,21 @@
                 }
             }
         },
+        "audience_segment": {
+            "type": "enumeration",
+            "pluginOptions": {
+                "i18n": {
+                    "localized": true
+                }
+            },
+            "enum": [
+                "corporate",
+                "luxury_traveler",
+                "private_group",
+                "brand_activation",
+                "executive"
+            ]
+        },
         "designed_for": {
             "type": "blocks",
             "pluginOptions": {
@@ -168,7 +183,49 @@
                 "historical"
             ]
         },
+        "geo_experience_type": {
+            "type": "enumeration",
+            "pluginOptions": {
+                "i18n": {
+                    "localized": true
+                }
+            },
+            "enum": [
+                "signature",
+                "private",
+                "seasonal"
+            ]
+        },
+        "mood": {
+            "type": "enumeration",
+            "pluginOptions": {
+                "i18n": {
+                    "localized": true
+                }
+            },
+            "enum": [
+                "exploration",
+                "celebration",
+                "stillness",
+                "performance",
+                "gastronomy",
+                "adventure"
+            ]
+        },
         "intent_level": {
+            "type": "enumeration",
+            "pluginOptions": {
+                "i18n": {
+                    "localized": true
+                }
+            },
+            "enum": [
+                "low",
+                "medium",
+                "high"
+            ]
+        },
+        "intensity": {
             "type": "enumeration",
             "pluginOptions": {
                 "i18n": {
