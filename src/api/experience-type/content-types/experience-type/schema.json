@@ -1,0 +1,44 @@
+{
+  "kind": "collectionType",
+  "collectionName": "experience_types",
+  "info": {
+    "singularName": "experience-type",
+    "pluralName": "experience-types",
+    "displayName": "Experience Type"
+  },
+  "options": {
+    "draftAndPublish": true
+  },
+  "attributes": {
+    "name": {
+      "type": "string",
+      "required": true
+    },
+    "slug": {
+      "type": "uid",
+      "targetField": "name",
+      "required": true,
+      "unique": true
+    },
+    "description": {
+      "type": "text"
+    },
+    "schema_hint": {
+      "type": "string"
+    },
+    "external_reference_url": {
+      "type": "string"
+    },
+    "same_as": {
+      "type": "json"
+    },
+    "confidence_score": {
+      "type": "decimal"
+    },
+    "validated_by": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::expert.expert"
+    }
+  }
+}

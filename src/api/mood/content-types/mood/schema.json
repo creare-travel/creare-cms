@@ -1,0 +1,56 @@
+{
+  "kind": "collectionType",
+  "collectionName": "moods",
+  "info": {
+    "singularName": "mood",
+    "pluralName": "moods",
+    "displayName": "Mood"
+  },
+  "options": {
+    "draftAndPublish": true
+  },
+  "attributes": {
+    "name": {
+      "type": "string",
+      "required": true
+    },
+    "slug": {
+      "type": "uid",
+      "targetField": "name",
+      "required": true,
+      "unique": true
+    },
+    "description": {
+      "type": "text"
+    },
+    "synonyms": {
+      "type": "json"
+    },
+    "semantic_tags": {
+      "type": "json"
+    },
+    "external_reference_url": {
+      "type": "string"
+    },
+    "same_as": {
+      "type": "json"
+    },
+    "visual_mood_tags": {
+      "type": "json"
+    },
+    "sound_landscape": {
+      "type": "text"
+    },
+    "sensory_keywords": {
+      "type": "json"
+    },
+    "confidence_score": {
+      "type": "decimal"
+    },
+    "validated_by": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::expert.expert"
+    }
+  }
+}

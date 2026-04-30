@@ -430,6 +430,45 @@ export interface AdminUser extends Struct.CollectionTypeSchema {
   };
 }
 
+export interface ApiAudienceSegmentAudienceSegment
+  extends Struct.CollectionTypeSchema {
+  collectionName: 'audience_segments';
+  info: {
+    displayName: 'Audience Segment';
+    pluralName: 'audience-segments';
+    singularName: 'audience-segment';
+  };
+  options: {
+    draftAndPublish: true;
+  };
+  attributes: {
+    confidence_score: Schema.Attribute.Decimal;
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    description: Schema.Attribute.Text;
+    external_reference_url: Schema.Attribute.String;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::audience-segment.audience-segment'
+    > &
+      Schema.Attribute.Private;
+    name: Schema.Attribute.String & Schema.Attribute.Required;
+    publishedAt: Schema.Attribute.DateTime;
+    same_as: Schema.Attribute.JSON;
+    semantic_tags: Schema.Attribute.JSON;
+    slug: Schema.Attribute.UID<'name'> &
+      Schema.Attribute.Required &
+      Schema.Attribute.Unique;
+    synonyms: Schema.Attribute.JSON;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    validated_by: Schema.Attribute.Relation<'manyToOne', 'api::expert.expert'>;
+  };
+}
+
 export interface ApiDestinationDestination extends Struct.CollectionTypeSchema {
   collectionName: 'destinations';
   info: {
@@ -545,6 +584,44 @@ export interface ApiDestinationDestination extends Struct.CollectionTypeSchema {
   };
 }
 
+export interface ApiExperienceTypeExperienceType
+  extends Struct.CollectionTypeSchema {
+  collectionName: 'experience_types';
+  info: {
+    displayName: 'Experience Type';
+    pluralName: 'experience-types';
+    singularName: 'experience-type';
+  };
+  options: {
+    draftAndPublish: true;
+  };
+  attributes: {
+    confidence_score: Schema.Attribute.Decimal;
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    description: Schema.Attribute.Text;
+    external_reference_url: Schema.Attribute.String;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::experience-type.experience-type'
+    > &
+      Schema.Attribute.Private;
+    name: Schema.Attribute.String & Schema.Attribute.Required;
+    publishedAt: Schema.Attribute.DateTime;
+    same_as: Schema.Attribute.JSON;
+    schema_hint: Schema.Attribute.String;
+    slug: Schema.Attribute.UID<'name'> &
+      Schema.Attribute.Required &
+      Schema.Attribute.Unique;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    validated_by: Schema.Attribute.Relation<'manyToOne', 'api::expert.expert'>;
+  };
+}
+
 export interface ApiExperienceExperience extends Struct.CollectionTypeSchema {
   collectionName: 'experiences';
   info: {
@@ -562,6 +639,24 @@ export interface ApiExperienceExperience extends Struct.CollectionTypeSchema {
   };
   attributes: {
     audience: Schema.Attribute.Blocks &
+      Schema.Attribute.SetPluginOptions<{
+        i18n: {
+          localized: true;
+        };
+      }>;
+    audience_entity: Schema.Attribute.Relation<
+      'manyToOne',
+      'api::audience-segment.audience-segment'
+    >;
+    audience_segment: Schema.Attribute.Enumeration<
+      [
+        'corporate',
+        'luxury_traveler',
+        'private_group',
+        'brand_activation',
+        'executive',
+      ]
+    > &
       Schema.Attribute.SetPluginOptions<{
         i18n: {
           localized: true;
@@ -585,6 +680,12 @@ export interface ApiExperienceExperience extends Struct.CollectionTypeSchema {
     createdAt: Schema.Attribute.DateTime;
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
+    cta_label: Schema.Attribute.String &
+      Schema.Attribute.SetPluginOptions<{
+        i18n: {
+          localized: true;
+        };
+      }>;
     cta_text: Schema.Attribute.String &
       Schema.Attribute.SetPluginOptions<{
         i18n: {
@@ -597,11 +698,29 @@ export interface ApiExperienceExperience extends Struct.CollectionTypeSchema {
           localized: true;
         };
       }>;
+    designed_for: Schema.Attribute.Blocks &
+      Schema.Attribute.SetPluginOptions<{
+        i18n: {
+          localized: true;
+        };
+      }>;
     destination: Schema.Attribute.Relation<
       'manyToOne',
       'api::destination.destination'
     >;
+    differentiator: Schema.Attribute.Text &
+      Schema.Attribute.SetPluginOptions<{
+        i18n: {
+          localized: true;
+        };
+      }>;
     duration: Schema.Attribute.String &
+      Schema.Attribute.SetPluginOptions<{
+        i18n: {
+          localized: true;
+        };
+      }>;
+    experience_flow: Schema.Attribute.Blocks &
       Schema.Attribute.SetPluginOptions<{
         i18n: {
           localized: true;
@@ -625,6 +744,10 @@ export interface ApiExperienceExperience extends Struct.CollectionTypeSchema {
           localized: true;
         };
       }>;
+    experience_type_entity: Schema.Attribute.Relation<
+      'manyToOne',
+      'api::experience-type.experience-type'
+    >;
     gallery: Schema.Attribute.Media<
       'images' | 'files' | 'videos' | 'audios',
       true
@@ -634,7 +757,21 @@ export interface ApiExperienceExperience extends Struct.CollectionTypeSchema {
           localized: true;
         };
       }>;
+    geo_experience_type: Schema.Attribute.Enumeration<
+      ['signature', 'private', 'seasonal']
+    > &
+      Schema.Attribute.SetPluginOptions<{
+        i18n: {
+          localized: true;
+        };
+      }>;
     group_size: Schema.Attribute.String &
+      Schema.Attribute.SetPluginOptions<{
+        i18n: {
+          localized: true;
+        };
+      }>;
+    highlights: Schema.Attribute.Blocks &
       Schema.Attribute.SetPluginOptions<{
         i18n: {
           localized: true;
@@ -648,6 +785,16 @@ export interface ApiExperienceExperience extends Struct.CollectionTypeSchema {
       }>;
     inquiries: Schema.Attribute.Relation<'oneToMany', 'api::inquiry.inquiry'>;
     insights: Schema.Attribute.Relation<'manyToOne', 'api::insight.insight'>;
+    intensity: Schema.Attribute.Enumeration<['low', 'medium', 'high']> &
+      Schema.Attribute.SetPluginOptions<{
+        i18n: {
+          localized: true;
+        };
+      }>;
+    intensity_entity: Schema.Attribute.Relation<
+      'manyToOne',
+      'api::intensity.intensity'
+    >;
     intent_level: Schema.Attribute.Enumeration<['low', 'medium', 'high']> &
       Schema.Attribute.SetPluginOptions<{
         i18n: {
@@ -659,6 +806,35 @@ export interface ApiExperienceExperience extends Struct.CollectionTypeSchema {
       'oneToMany',
       'api::experience.experience'
     >;
+    location: Schema.Attribute.String &
+      Schema.Attribute.SetPluginOptions<{
+        i18n: {
+          localized: true;
+        };
+      }>;
+    mood: Schema.Attribute.Enumeration<
+      [
+        'exploration',
+        'celebration',
+        'stillness',
+        'performance',
+        'gastronomy',
+        'adventure',
+      ]
+    > &
+      Schema.Attribute.SetPluginOptions<{
+        i18n: {
+          localized: true;
+        };
+      }>;
+    mood_entity: Schema.Attribute.Relation<'manyToOne', 'api::mood.mood'>;
+    one_line_hook: Schema.Attribute.Text &
+      Schema.Attribute.SetPluginOptions<{
+        i18n: {
+          localized: true;
+        };
+      }>;
+    priority: Schema.Attribute.Integer;
     program: Schema.Attribute.Blocks &
       Schema.Attribute.SetPluginOptions<{
         i18n: {
@@ -709,6 +885,49 @@ export interface ApiExperienceExperience extends Struct.CollectionTypeSchema {
           localized: true;
         };
       }>;
+    visibility_status: Schema.Attribute.Enumeration<
+      ['draft', 'active', 'hidden']
+    > &
+      Schema.Attribute.DefaultTo<'draft'>;
+    wow_moment: Schema.Attribute.Text &
+      Schema.Attribute.SetPluginOptions<{
+        i18n: {
+          localized: true;
+        };
+      }>;
+  };
+}
+
+export interface ApiExpertExpert extends Struct.CollectionTypeSchema {
+  collectionName: 'experts';
+  info: {
+    displayName: 'Expert';
+    pluralName: 'experts';
+    singularName: 'expert';
+  };
+  options: {
+    draftAndPublish: true;
+  };
+  attributes: {
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    credentials: Schema.Attribute.Text;
+    description: Schema.Attribute.Text;
+    image: Schema.Attribute.Media<'images'>;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::expert.expert'
+    > &
+      Schema.Attribute.Private;
+    name: Schema.Attribute.String & Schema.Attribute.Required;
+    publishedAt: Schema.Attribute.DateTime;
+    same_as: Schema.Attribute.JSON;
+    title: Schema.Attribute.String;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
   };
 }
 
@@ -856,6 +1075,80 @@ export interface ApiInsightInsight extends Struct.CollectionTypeSchema {
     updatedAt: Schema.Attribute.DateTime;
     updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
+  };
+}
+
+export interface ApiIntensityIntensity extends Struct.CollectionTypeSchema {
+  collectionName: 'intensities';
+  info: {
+    displayName: 'Intensity';
+    pluralName: 'intensities';
+    singularName: 'intensity';
+  };
+  options: {
+    draftAndPublish: true;
+  };
+  attributes: {
+    confidence_score: Schema.Attribute.Decimal;
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    description: Schema.Attribute.Text;
+    external_reference_url: Schema.Attribute.String;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::intensity.intensity'
+    > &
+      Schema.Attribute.Private;
+    name: Schema.Attribute.String & Schema.Attribute.Required;
+    publishedAt: Schema.Attribute.DateTime;
+    same_as: Schema.Attribute.JSON;
+    semantic_tags: Schema.Attribute.JSON;
+    slug: Schema.Attribute.UID<'name'> &
+      Schema.Attribute.Required &
+      Schema.Attribute.Unique;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+  };
+}
+
+export interface ApiMoodMood extends Struct.CollectionTypeSchema {
+  collectionName: 'moods';
+  info: {
+    displayName: 'Mood';
+    pluralName: 'moods';
+    singularName: 'mood';
+  };
+  options: {
+    draftAndPublish: true;
+  };
+  attributes: {
+    confidence_score: Schema.Attribute.Decimal;
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    description: Schema.Attribute.Text;
+    external_reference_url: Schema.Attribute.String;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<'oneToMany', 'api::mood.mood'> &
+      Schema.Attribute.Private;
+    name: Schema.Attribute.String & Schema.Attribute.Required;
+    publishedAt: Schema.Attribute.DateTime;
+    same_as: Schema.Attribute.JSON;
+    semantic_tags: Schema.Attribute.JSON;
+    sensory_keywords: Schema.Attribute.JSON;
+    slug: Schema.Attribute.UID<'name'> &
+      Schema.Attribute.Required &
+      Schema.Attribute.Unique;
+    sound_landscape: Schema.Attribute.Text;
+    synonyms: Schema.Attribute.JSON;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    validated_by: Schema.Attribute.Relation<'manyToOne', 'api::expert.expert'>;
+    visual_mood_tags: Schema.Attribute.JSON;
   };
 }
 
@@ -1370,10 +1663,15 @@ declare module '@strapi/strapi' {
       'admin::transfer-token': AdminTransferToken;
       'admin::transfer-token-permission': AdminTransferTokenPermission;
       'admin::user': AdminUser;
+      'api::audience-segment.audience-segment': ApiAudienceSegmentAudienceSegment;
       'api::destination.destination': ApiDestinationDestination;
+      'api::experience-type.experience-type': ApiExperienceTypeExperienceType;
       'api::experience.experience': ApiExperienceExperience;
+      'api::expert.expert': ApiExpertExpert;
       'api::inquiry.inquiry': ApiInquiryInquiry;
       'api::insight.insight': ApiInsightInsight;
+      'api::intensity.intensity': ApiIntensityIntensity;
+      'api::mood.mood': ApiMoodMood;
       'plugin::content-releases.release': PluginContentReleasesRelease;
       'plugin::content-releases.release-action': PluginContentReleasesReleaseAction;
       'plugin::i18n.locale': PluginI18NLocale;

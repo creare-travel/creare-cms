@@ -1,0 +1,37 @@
+{
+  "kind": "collectionType",
+  "collectionName": "experts",
+  "info": {
+    "singularName": "expert",
+    "pluralName": "experts",
+    "displayName": "Expert"
+  },
+  "options": {
+    "draftAndPublish": true
+  },
+  "attributes": {
+    "name": {
+      "type": "string",
+      "required": true
+    },
+    "title": {
+      "type": "string"
+    },
+    "description": {
+      "type": "text"
+    },
+    "credentials": {
+      "type": "text"
+    },
+    "image": {
+      "type": "media",
+      "multiple": false,
+      "allowedTypes": [
+        "images"
+      ]
+    },
+    "same_as": {
+      "type": "json"
+    }
+  }
+}

@@ -212,6 +212,11 @@
                 "adventure"
             ]
         },
+        "mood_entity": {
+            "type": "relation",
+            "relation": "manyToOne",
+            "target": "api::mood.mood"
+        },
         "intent_level": {
             "type": "enumeration",
             "pluginOptions": {
@@ -237,6 +242,11 @@
                 "medium",
                 "high"
             ]
+        },
+        "intensity_entity": {
+            "type": "relation",
+            "relation": "manyToOne",
+            "target": "api::intensity.intensity"
         },
         "cta_text": {
             "type": "string",
@@ -336,6 +346,16 @@
                     "localized": true
                 }
             }
+        },
+        "audience_entity": {
+            "type": "relation",
+            "relation": "manyToOne",
+            "target": "api::audience-segment.audience-segment"
+        },
+        "experience_type_entity": {
+            "type": "relation",
+            "relation": "manyToOne",
+            "target": "api::experience-type.experience-type"
         },
         "insights": {
             "type": "relation",
