@@ -1,4 +1,8 @@
 import type { Core } from '@strapi/strapi';
+// Load the standalone ontology seeder without changing its CLI usage.
+// It stays idempotent and can run safely even when core content already exists.
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { seedOntologyLayer } = require('../scripts/seed-creare-ontology-layer.js');
 
 const blockText = (text: string): any => [
   {
@@ -251,10 +255,13 @@ export default {
       strapi.log.info(
         `SEED SKIPPED: existing content found (destinations=${destinationCount}, experiences=${experienceCount}, insights=${insightCount}).`
       );
-      return;
+    } else {
+      strapi.log.info('SEED RUN: creating placeholder CREARE destination, experience, and insight content.');
+      await runContentSeed(strapi);
     }
 
-    strapi.log.info('SEED RUN: creating placeholder CREARE destination, experience, and insight content.');
-    await runContentSeed(strapi);
+    strapi.log.info('ONTOLOGY SEED RUN: processing ontology collections regardless of existing core content.');
+    const ontologySeedResult = await seedOntologyLayer({ strapi, isDryRun: false });
+    strapi.log.info(`ONTOLOGY SEED RESULT: ${JSON.stringify(ontologySeedResult.summary)}`);
   },
 };

@@ -242,6 +242,18 @@ const ontologySeed = {
   ],
 };
 
+const moods = ontologySeed.mood;
+const audienceSegments = ontologySeed.audienceSegment;
+const experienceTypes = ontologySeed.experienceType;
+const intensities = ontologySeed.intensity;
+
+const datasets = {
+  moods,
+  audienceSegments,
+  experienceTypes,
+  intensities,
+};
+
 const normalizeString = (value) => {
   if (value === undefined || value === null) {
     return '';
@@ -309,7 +321,10 @@ const syncCollection = async ({ service, uid, entries, slugField = 'slug', isDry
 
       if (!isDryRun) {
         await service.create({
-          data: seedEntry,
+          data: {
+            ...seedEntry,
+            publishedAt: new Date(),
+          },
         });
       }
 
@@ -338,6 +353,56 @@ const syncCollection = async ({ service, uid, entries, slugField = 'slug', isDry
   return results;
 };
 
+const seedOntologyLayer = async ({ strapi, isDryRun }) => {
+  console.log('MOODS LENGTH:', datasets.moods.length);
+  console.log('AUDIENCE LENGTH:', datasets.audienceSegments.length);
+  console.log('EXPERIENCE TYPES LENGTH:', datasets.experienceTypes.length);
+  console.log('INTENSITIES LENGTH:', datasets.intensities.length);
+
+  const moodResults = await syncCollection({
+    uid: 'api::mood.mood',
+    service: strapi.documents('api::mood.mood'),
+    entries: datasets.moods,
+    isDryRun,
+  });
+
+  const audienceResults = await syncCollection({
+    uid: 'api::audience-segment.audience-segment',
+    service: strapi.documents('api::audience-segment.audience-segment'),
+    entries: datasets.audienceSegments,
+    isDryRun,
+  });
+
+  const experienceTypeResults = await syncCollection({
+    uid: 'api::experience-type.experience-type',
+    service: strapi.documents('api::experience-type.experience-type'),
+    entries: datasets.experienceTypes,
+    isDryRun,
+  });
+
+  const intensityResults = await syncCollection({
+    uid: 'api::intensity.intensity',
+    service: strapi.documents('api::intensity.intensity'),
+    entries: datasets.intensities,
+    isDryRun,
+  });
+
+  const allResults = [...moodResults, ...audienceResults, ...experienceTypeResults, ...intensityResults];
+
+  return {
+    mode: isDryRun ? 'dry-run' : 'apply',
+    summary: {
+      create: allResults.filter((item) => item.action === 'create').length,
+      updateMissingFields: allResults.filter((item) => item.action === 'update-missing-fields').length,
+      skip: allResults.filter((item) => item.action === 'skip').length,
+    },
+    results: allResults,
+    confirmation: 'No Experience records are read or modified by this script.',
+  };
+};
+
+module.exports.seedOntologyLayer = seedOntologyLayer;
+
 const main = async () => {
   const isDryRun = process.argv.includes('--dry-run');
   const isApply = process.argv.includes('--apply');
@@ -353,63 +418,17 @@ const main = async () => {
   try {
     await strapi.load();
 
-    const moodResults = await syncCollection({
-      uid: 'api::mood.mood',
-      service: strapi.documents('api::mood.mood'),
-      entries: ontologySeed.mood,
-      isDryRun,
-    });
+    const result = await seedOntologyLayer({ strapi, isDryRun });
 
-    const audienceResults = await syncCollection({
-      uid: 'api::audience-segment.audience-segment',
-      service: strapi.documents('api::audience-segment.audience-segment'),
-      entries: ontologySeed.audienceSegment,
-      isDryRun,
-    });
-
-    const experienceTypeResults = await syncCollection({
-      uid: 'api::experience-type.experience-type',
-      service: strapi.documents('api::experience-type.experience-type'),
-      entries: ontologySeed.experienceType,
-      isDryRun,
-    });
-
-    const intensityResults = await syncCollection({
-      uid: 'api::intensity.intensity',
-      service: strapi.documents('api::intensity.intensity'),
-      entries: ontologySeed.intensity,
-      isDryRun,
-    });
-
-    const allResults = [
-      ...moodResults,
-      ...audienceResults,
-      ...experienceTypeResults,
-      ...intensityResults,
-    ];
-
-    console.log(
-      JSON.stringify(
-        {
-          mode: isDryRun ? 'dry-run' : 'apply',
-          summary: {
-            create: allResults.filter((item) => item.action === 'create').length,
-            updateMissingFields: allResults.filter((item) => item.action === 'update-missing-fields').length,
-            skip: allResults.filter((item) => item.action === 'skip').length,
-          },
-          results: allResults,
-          confirmation: 'No Experience records are read or modified by this script.',
-        },
-        null,
-        2
-      )
-    );
+    console.log(JSON.stringify(result, null, 2));
   } finally {
     await strapi.destroy();
   }
 };
 
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });
+}
