@@ -59,6 +59,10 @@ const ensureCreateSlug = (data?: Record<string, unknown>) => {
   }
 };
 
+const hasOwnSlug = (data?: Record<string, unknown>) => {
+  return Boolean(data) && Object.prototype.hasOwnProperty.call(data, 'slug');
+};
+
 export default {
   async beforeCreate(event: LifecycleEvent) {
     ensureCreateSlug(event.params.data);
@@ -71,14 +75,31 @@ export default {
       return;
     }
 
-    // Slugs are immutable after first creation to protect SEO, links, and JSON-LD canonical URLs.
+    // Temporary audit logging to inspect how the admin sends slug updates.
     const existingSlug = await resolveExistingSlug(event.params.where);
+    const incomingSlug = normalizeString(data.slug);
 
-    if (existingSlug) {
-      data.slug = existingSlug;
+    strapi.log.info(
+      `[experience.slug.beforeUpdate] incoming=${incomingSlug || '(empty)'} existing=${existingSlug || '(empty)'} hasOwnSlug=${hasOwnSlug(data)}`
+    );
+
+    if (hasOwnSlug(data)) {
+      if (!normalizeString(data.slug)) {
+        if (normalizeString(data.title)) {
+          data.slug = slugify(data.title);
+        } else if (existingSlug) {
+          data.slug = existingSlug;
+        }
+      }
+
+      strapi.log.info(
+        `[experience.slug.beforeUpdate] final=${normalizeString(data.slug) || '(empty)'}`
+      );
       return;
     }
 
-    ensureCreateSlug(data);
+    strapi.log.info(
+      `[experience.slug.beforeUpdate] final=${normalizeString(data.slug) || '(unchanged)'}`
+    );
   },
 };
