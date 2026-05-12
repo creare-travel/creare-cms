@@ -112,8 +112,8 @@ const experienceSeed = [
     category: 'signature',
   },
   {
-    title: 'Open Studio Istanbul',
-    slug: 'open-studio-istanbul',
+    title: 'The Studio Session™',
+    slug: 'the-studio-session',
     destination: 'Istanbul',
     category: 'lab',
   },
@@ -240,6 +240,20 @@ export default {
     if (process.env.NODE_ENV !== 'production') {
       return;
     }
+
+    const productionPlaceholderSeedEnabled =
+      process.env.ENABLE_PRODUCTION_PLACEHOLDER_SEED === 'true';
+
+    if (!productionPlaceholderSeedEnabled) {
+      strapi.log.info(
+        'PRODUCTION PLACEHOLDER SEED DISABLED: set ENABLE_PRODUCTION_PLACEHOLDER_SEED=true to opt in explicitly.'
+      );
+      return;
+    }
+
+    strapi.log.warn(
+      'PRODUCTION PLACEHOLDER SEED ENABLED: placeholder CREARE content seeding has been explicitly opted in for this startup.'
+    );
 
     const [destinationCount, experienceCount, insightCount] = await Promise.all([
       strapi.db.query('api::destination.destination').count(),

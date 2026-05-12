@@ -2,7 +2,23 @@ import path from 'path';
 import type { Core } from '@strapi/strapi';
 
 const config = ({ env }: Core.Config.Shared.ConfigParams): Core.Config.Database => {
+  const nodeEnv = env('NODE_ENV', 'development');
+  const isProduction = nodeEnv === 'production';
   const client = env('DATABASE_CLIENT', 'sqlite');
+
+  if (isProduction) {
+    if (client !== 'postgres') {
+      throw new Error(
+        `Production database misconfiguration: DATABASE_CLIENT must be "postgres", received "${client}".`
+      );
+    }
+
+    if (!env('DATABASE_URL')) {
+      throw new Error(
+        'Production database misconfiguration: DATABASE_URL is required when NODE_ENV=production.'
+      );
+    }
+  }
 
   const connections = {
     mysql: {
