@@ -81,6 +81,11 @@
             "target": "api::insight.insight",
             "mappedBy": "destination"
         },
+        "secondary_experiences": {
+            "type": "relation",
+            "relation": "manyToMany",
+            "target": "api::experience.experience"
+        },
         "description": {
             "type": "blocks",
             "pluginOptions": {

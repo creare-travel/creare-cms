@@ -357,6 +357,16 @@
             "relation": "manyToOne",
             "target": "api::experience-type.experience-type"
         },
+        "related_experiences": {
+            "type": "relation",
+            "relation": "manyToMany",
+            "target": "api::experience.experience"
+        },
+        "related_insights": {
+            "type": "relation",
+            "relation": "manyToMany",
+            "target": "api::insight.insight"
+        },
         "insights": {
             "type": "relation",
             "relation": "manyToOne",

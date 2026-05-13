@@ -551,6 +551,10 @@ export interface ApiDestinationDestination extends Struct.CollectionTypeSchema {
           localized: true;
         };
       }>;
+    secondary_experiences: Schema.Attribute.Relation<
+      'manyToMany',
+      'api::experience.experience'
+    >;
     sections: Schema.Attribute.Component<'destination.section', true> &
       Schema.Attribute.SetPluginOptions<{
         i18n: {
@@ -842,6 +846,14 @@ export interface ApiExperienceExperience extends Struct.CollectionTypeSchema {
         };
       }>;
     publishedAt: Schema.Attribute.DateTime;
+    related_experiences: Schema.Attribute.Relation<
+      'manyToMany',
+      'api::experience.experience'
+    >;
+    related_insights: Schema.Attribute.Relation<
+      'manyToMany',
+      'api::insight.insight'
+    >;
     seo_description: Schema.Attribute.String &
       Schema.Attribute.SetPluginOptions<{
         i18n: {
