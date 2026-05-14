@@ -29,7 +29,7 @@ const ENRICHMENT_MAP = {
   'golden-horn-regatta': {
     audience_segment: 'executive',
   },
-  'open-studio-istanbul': {
+  'the-studio-session': {
     intensity: 'low',
   },
   'imperial-flavors-culinary-atelier': {

@@ -114,8 +114,8 @@ const experienceSeed = [
     category: 'signature',
   },
   {
-    title: 'Open Studio Istanbul',
-    slug: 'open-studio-istanbul',
+    title: 'The Studio Session™',
+    slug: 'the-studio-session',
     destination: 'Istanbul',
     category: 'lab',
   },

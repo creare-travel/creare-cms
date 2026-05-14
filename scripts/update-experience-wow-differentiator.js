@@ -73,7 +73,7 @@ const UPDATES = [
       'The experience structures culinary competition through Michelin-level evaluation, combining accessible participation, team dynamics, and chef-led scoring within a fully private, buy-out environment.',
   },
   {
-    slug: 'open-studio-istanbul',
+    slug: 'the-studio-session',
     wow_moment:
       'Guests move freely between artistic stations—ceramics, painting, marbling, and calligraphy—creating their own pieces within a live studio environment guided by resident artists.',
     differentiator:
