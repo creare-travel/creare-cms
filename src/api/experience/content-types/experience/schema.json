@@ -386,6 +386,69 @@
                     "localized": true
                 }
             }
+        },
+        "group_size_note": {
+            "type": "text",
+            "maxLength": 280,
+            "pluginOptions": {
+                "i18n": {
+                    "localized": true
+                }
+            }
+        },
+        "programme_note": {
+            "type": "text",
+            "maxLength": 500,
+            "pluginOptions": {
+                "i18n": {
+                    "localized": true
+                }
+            }
+        },
+        "cta_heading": {
+            "type": "string",
+            "maxLength": 180,
+            "pluginOptions": {
+                "i18n": {
+                    "localized": true
+                }
+            }
+        },
+        "cta_supporting_text": {
+            "type": "text",
+            "maxLength": 500,
+            "pluginOptions": {
+                "i18n": {
+                    "localized": true
+                }
+            }
+        },
+        "cta_access_line": {
+            "type": "string",
+            "maxLength": 180,
+            "pluginOptions": {
+                "i18n": {
+                    "localized": true
+                }
+            }
+        },
+        "og_description": {
+            "type": "text",
+            "maxLength": 300,
+            "pluginOptions": {
+                "i18n": {
+                    "localized": true
+                }
+            }
+        },
+        "hero_alt_text": {
+            "type": "text",
+            "maxLength": 300,
+            "pluginOptions": {
+                "i18n": {
+                    "localized": true
+                }
+            }
         }
     }
 }

@@ -11,6 +11,7 @@
     "develop": "strapi develop",
     "import:experiences:dry": "node scripts/import-experiences-from-excel.js --dry-run",
     "import:experiences": "node scripts/import-experiences-from-excel.js --apply",
+    "migrate:experience-single-source": "node scripts/migrate-experience-single-source.js",
     "seed:content": "node scripts/seed-content.js",
     "start": "strapi start",
     "strapi": "strapi",
