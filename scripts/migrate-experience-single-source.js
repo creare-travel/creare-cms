@@ -65,6 +65,180 @@ const PROHIBITED_BLACK_CLAIMS = [
   "access is guaranteed",
 ];
 
+const EXPECTED_TITLE_REPLACEMENTS = {
+  "İpek Yolu: İstanbul™": "Silk Road Istanbul™",
+  "İmparatorluk Lezzetleri™ — Mutfak Atölyesi":
+    "Imperial Flavors™ — Culinary Atelier",
+  "Kokteyl Atölyesi™ — Karıştır, Hareket Et, Bağ Kur":
+    "Cocktail Atelier™ — Mix, Move, Connect",
+  "Beylerbeyi 1869™ — İmparatorluğun Kırılma Anı":
+    "Beylerbeyi 1869™ — Empire, Interrupted",
+  "Performansın İzinde™": "Driven by Performance™",
+};
+
+const PROTECTED_OLD_NAME_PATTERNS = [
+  {
+    obsolete: "İpek Yolu: İstanbul™",
+    pattern: /İpek Yolu:\s*İstanbul(?:\s*™)?/u,
+  },
+  {
+    obsolete: "İmparatorluk Lezzetleri™ — Mutfak Atölyesi",
+    pattern: /İmparatorluk Lezzetleri(?:\s*™)?\s*-\s*Mutfak Atölyesi/u,
+  },
+  {
+    obsolete: "Kokteyl Atölyesi™ — Karıştır, Hareket Et, Bağ Kur",
+    pattern:
+      /Kokteyl Atölyesi(?:\s*™)?\s*-\s*Karıştır,\s*Hareket Et,\s*Bağ Kur/u,
+  },
+  {
+    obsolete: "Beylerbeyi 1869™ — İmparatorluğun Kırılma Anı",
+    pattern: /Beylerbeyi 1869(?:\s*™)?\s*-\s*İmparatorluğun Kırılma Anı/u,
+  },
+  {
+    obsolete: "Performansın İzinde™",
+    pattern: /Performansın İzinde(?:\s*™)?/u,
+  },
+];
+
+const CMS_DESTINATION_FIELDS = [
+  "title",
+  "short_description",
+  "description",
+  "program",
+  "highlights",
+  "experience_flow",
+  "audience",
+  "designed_for",
+  "ideal_guest",
+  "duration",
+  "group_size",
+  "location",
+  "venue_details",
+  "group_size_note",
+  "programme_note",
+  "cta_heading",
+  "cta_supporting_text",
+  "cta_access_line",
+  "cta_label",
+  "cta_text",
+  "one_line_hook",
+  "seo_title",
+  "seo_description",
+  "og_description",
+  "hero_alt_text",
+  "cover_image",
+  "gallery",
+  "category",
+  "series",
+  "experience_type",
+  "geo_experience_type",
+  "mood",
+  "intensity",
+  "audience_segment",
+  "intent_level",
+  "priority",
+  "visibility_status",
+  "destination",
+  "related_experiences",
+  "related_insights",
+];
+
+const FRONTEND_SUPPLEMENT_DESTINATIONS = {
+  expectedTitle: "title",
+  expectedCategory: "category",
+  shortDescription: "short_description",
+  groupSizeNote: "group_size_note",
+  programmeNote: "programme_note",
+  ctaHeading: "cta_heading",
+  ctaSupportingText: "cta_supporting_text",
+  ctaAccessLine: "cta_access_line",
+  openGraphDescription: "og_description",
+  heroAltText: "hero_alt_text",
+};
+
+const PAYLOAD_SUPPLEMENT_FIELDS = Object.values(
+  FRONTEND_SUPPLEMENT_DESTINATIONS,
+).filter((field) => field !== "category");
+
+const EXPECTED_CATEGORY_BY_SLUG = {
+  "silk-road-istanbul": "signature",
+  "istanbul-through-the-lens": "signature",
+  "floating-salon-d-opera": "signature",
+  "culinary-arena-bodrum": "signature",
+  "the-salon-of-hands": "signature",
+  "golden-horn-regatta": "signature",
+  "princes-islands-regatta": "lab",
+  "the-studio-session": "lab",
+  "bodrum-beach-games-rhythm-competition-celebration": "lab",
+  "table-to-farm-bodrum": "signature",
+  "cocktail-atelier-mix-move-connect": "signature",
+  "imperial-flavors-culinary-atelier": "signature",
+  "driven-by-performance": "signature",
+  "beylerbeyi-1869-empire-interrupted": "signature",
+};
+
+const KNOWN_PROTECTED_FIELD_CORRECTIONS = [
+  {
+    slug: "silk-road-istanbul",
+    fieldPath: "cta_heading",
+    expected: "Silk Road Istanbul™ Deneyimini Rezerve Edin",
+  },
+  {
+    slug: "imperial-flavors-culinary-atelier",
+    fieldPath: "cta_heading",
+    expected: "Imperial Flavors™ — Culinary Atelier için Özel Talep",
+  },
+  {
+    slug: "cocktail-atelier-mix-move-connect",
+    fieldPath: "cta_heading",
+    expected: "Cocktail Atelier™ — Mix, Move, Connect Deneyimini Planlayın",
+  },
+  {
+    slug: "beylerbeyi-1869-empire-interrupted",
+    fieldPath: "cta_heading",
+    expected: "Beylerbeyi 1869™ — Empire, Interrupted Deneyimini Rezerve Edin",
+  },
+  {
+    slug: "driven-by-performance",
+    fieldPath: "cta_heading",
+    expected: "Driven by Performance™ için Özel Talep",
+  },
+  {
+    slug: "silk-road-istanbul",
+    fieldPath: "differentiator",
+    expected:
+      "Silk Road Istanbul™, klasik şehir turlarından farklı olarak Çin mirasını, Osmanlı tarihini, seramikleri, ticaret hafızasını ve tarihî mekânları tek bir kültürel süreklilik anlatısı içinde birleştirir.",
+  },
+  {
+    slug: "driven-by-performance",
+    fieldPath: "description.1.children.0.text",
+    expected:
+      "Driven by Performance™, kurumsal takımları tamamen kendilerine ayrılmış profesyonel bir yarış pistinde; kontrol, reaksiyon, hassasiyet ve zamanlama etrafında tasarlanmış uygulamalı bir motor sporları programında buluşturur.",
+  },
+  {
+    slug: "driven-by-performance",
+    fieldPath: "seo_title",
+    expected: "Driven by Performance™ | İstanbul Özel Pist Deneyimi | CREARE",
+  },
+  {
+    slug: "beylerbeyi-1869-empire-interrupted",
+    fieldPath: "description.1.children.0.text",
+    expected:
+      "Beylerbeyi 1869™ — Empire, Interrupted, sarayın devlet misafirliği, temsil ve diplomasiyle biçimlenen 1869 dünyasını; Sultan Abdülaziz, İmparatoriçe Eugénie, Pertevniyal Valide Sultan ve Kont Nikolay İgnatyev’in perspektifleri üzerinden yorumlar.",
+  },
+];
+
+const DERIVED_RELATION_FIELDS = new Set([
+  "cover_image",
+  "destination",
+  "gallery",
+  "inquiries",
+  "insights",
+  "localizations",
+  "related_experiences",
+  "related_insights",
+]);
+
 function usage() {
   console.log("Dry run:");
   console.log(
@@ -152,6 +326,332 @@ function verifyBackup(backupDir) {
   }
 
   return { manifestPath, filesVerified: entries.length, snapshotCounts };
+}
+
+function cloneJson(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function normalizeProtectedComparison(value) {
+  return value
+    .normalize("NFC")
+    .replace(/[’‘‛`´]/gu, "'")
+    .replace(/\s*'\s*/gu, "'")
+    .replace(/[‐‑‒–—−]/gu, "-")
+    .replace(/\s*-\s*/gu, " - ")
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
+function findProtectedNameMatches(
+  value,
+  { documentFamily, locale, fieldPath = "" },
+  matches = [],
+) {
+  if (typeof value === "string") {
+    const normalized = normalizeProtectedComparison(value);
+    for (const specification of PROTECTED_OLD_NAME_PATTERNS) {
+      const match = normalized.match(specification.pattern);
+      if (match) {
+        matches.push({
+          documentFamily,
+          locale,
+          fieldPath,
+          matchedObsoleteValue: specification.obsolete,
+          matchedText: match[0],
+        });
+      }
+    }
+    return matches;
+  }
+
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => {
+      findProtectedNameMatches(
+        item,
+        {
+          documentFamily,
+          locale,
+          fieldPath: fieldPath ? `${fieldPath}.${index}` : String(index),
+        },
+        matches,
+      );
+    });
+    return matches;
+  }
+
+  if (value && typeof value === "object") {
+    for (const [key, nestedValue] of Object.entries(value)) {
+      findProtectedNameMatches(
+        nestedValue,
+        {
+          documentFamily,
+          locale,
+          fieldPath: fieldPath ? `${fieldPath}.${key}` : key,
+        },
+        matches,
+      );
+    }
+  }
+
+  return matches;
+}
+
+function getValueAtPath(value, fieldPath) {
+  return fieldPath.split(".").reduce((current, segment) => {
+    if (current === null || current === undefined) return undefined;
+    return current[segment];
+  }, value);
+}
+
+function buildProjectedExperienceRecord(source, payloadRecord) {
+  const sourceCopy = cloneJson(source);
+  delete sourceCopy.localizations;
+
+  return {
+    ...sourceCopy,
+    ...cloneJson(payloadRecord.fields),
+    slug: source.slug,
+    documentId: source.documentId,
+    locale: source.locale,
+  };
+}
+
+function loadBackupExperienceDrafts(backupDir, locale) {
+  const snapshotPath = path.join(
+    backupDir,
+    "cms",
+    `experiences-${locale}-draft.json`,
+  );
+  const snapshot = JSON.parse(fs.readFileSync(snapshotPath, "utf8"));
+  if (!Array.isArray(snapshot.data)) {
+    throw new Error(`Invalid Experience backup snapshot: ${snapshotPath}`);
+  }
+  return snapshot.data;
+}
+
+function buildProjectedCmsState(payload, backupDir) {
+  const experiences = [];
+
+  for (const locale of EXPECTED.locales) {
+    const sourceByDocumentId = new Map(
+      loadBackupExperienceDrafts(backupDir, locale).map((record) => [
+        record.documentId,
+        record,
+      ]),
+    );
+
+    for (const payloadRecord of payload.records.filter(
+      (record) => record.locale === locale,
+    )) {
+      const source = sourceByDocumentId.get(payloadRecord.documentId);
+      if (!source) {
+        throw new Error(
+          `Backup is missing ${payloadRecord.documentId}:${locale}.`,
+        );
+      }
+      experiences.push({
+        kind: "experience",
+        documentFamily: payloadRecord.documentId,
+        locale,
+        slug: source.slug,
+        expectedSlug: payloadRecord.slug,
+        before: cloneJson(source),
+        after: buildProjectedExperienceRecord(source, payloadRecord),
+      });
+    }
+  }
+
+  const landing = EXPECTED.locales.map((locale) => ({
+    kind: "experience-landing",
+    documentFamily: "experience-landing",
+    locale,
+    slug: null,
+    expectedSlug: null,
+    before: null,
+    after: cloneJson(payload.landing[locale]),
+  }));
+
+  const categories = Object.entries(payload.categories).flatMap(
+    ([key, category]) =>
+      EXPECTED.locales.map((locale) => ({
+        kind: "experience-category-page",
+        documentFamily: key,
+        locale,
+        slug: null,
+        expectedSlug: null,
+        before: null,
+        after: {
+          key,
+          display_order: category.display_order,
+          ...cloneJson(category.locales[locale]),
+        },
+      })),
+  );
+
+  return { experiences, landing, categories };
+}
+
+function directCmsContent(record) {
+  return Object.fromEntries(
+    Object.entries(record).filter(
+      ([field]) =>
+        !DERIVED_RELATION_FIELDS.has(field) &&
+        ![
+          "createdAt",
+          "documentId",
+          "id",
+          "locale",
+          "publishedAt",
+          "updatedAt",
+        ].includes(field),
+    ),
+  );
+}
+
+function validateProjectedCmsState(projectedState, payload) {
+  const blockers = [];
+  const protectedOldNameMatches = [];
+  const cmsDestinationMissing = [];
+  const slugMismatches = [];
+
+  for (const entry of [
+    ...projectedState.experiences,
+    ...projectedState.landing,
+    ...projectedState.categories,
+  ]) {
+    if (entry.locale !== "tr-TR") continue;
+    findProtectedNameMatches(
+      directCmsContent(entry.after),
+      {
+        documentFamily: entry.documentFamily,
+        locale: entry.locale,
+      },
+      protectedOldNameMatches,
+    );
+  }
+
+  for (const entry of projectedState.experiences) {
+    if (entry.slug !== entry.expectedSlug) {
+      slugMismatches.push({
+        documentFamily: entry.documentFamily,
+        locale: entry.locale,
+        existing: entry.slug,
+        expected: entry.expectedSlug,
+      });
+    }
+
+    for (const field of CMS_DESTINATION_FIELDS) {
+      if (!Object.prototype.hasOwnProperty.call(entry.after, field)) {
+        cmsDestinationMissing.push({
+          documentFamily: entry.documentFamily,
+          locale: entry.locale,
+          slug: entry.slug,
+          field,
+        });
+      }
+    }
+  }
+
+  for (const record of payload.records) {
+    for (const field of PAYLOAD_SUPPLEMENT_FIELDS) {
+      if (!Object.prototype.hasOwnProperty.call(record.fields, field)) {
+        cmsDestinationMissing.push({
+          documentFamily: record.documentId,
+          locale: record.locale,
+          slug: record.slug,
+          field,
+          source: "frontend-supplement",
+        });
+      }
+    }
+  }
+
+  const categoryMismatches = projectedState.experiences
+    .filter(
+      (entry) => entry.after.category !== EXPECTED_CATEGORY_BY_SLUG[entry.slug],
+    )
+    .map((entry) => ({
+      documentFamily: entry.documentFamily,
+      locale: entry.locale,
+      slug: entry.slug,
+      expected: EXPECTED_CATEGORY_BY_SLUG[entry.slug],
+      actual: entry.after.category,
+    }));
+
+  const knownFieldCorrections = KNOWN_PROTECTED_FIELD_CORRECTIONS.map(
+    (correction) => {
+      const entry = projectedState.experiences.find(
+        (candidate) =>
+          candidate.locale === "tr-TR" && candidate.slug === correction.slug,
+      );
+      return {
+        ...correction,
+        before: entry
+          ? getValueAtPath(entry.before, correction.fieldPath)
+          : undefined,
+        after: entry
+          ? getValueAtPath(entry.after, correction.fieldPath)
+          : undefined,
+        matchesExpected:
+          Boolean(entry) &&
+          getValueAtPath(entry.after, correction.fieldPath) ===
+            correction.expected,
+      };
+    },
+  );
+  const knownCorrectionFailures = knownFieldCorrections.filter(
+    (correction) => !correction.matchesExpected,
+  );
+
+  if (protectedOldNameMatches.length > 0) {
+    blockers.push(
+      `${protectedOldNameMatches.length} protected old-name occurrence(s) remain in projected TR CMS content.`,
+    );
+  }
+  if (cmsDestinationMissing.length > 0) {
+    blockers.push(
+      `${cmsDestinationMissing.length} CMS destination field(s) are missing from projected Experience content.`,
+    );
+  }
+  if (slugMismatches.length > 0) {
+    blockers.push(
+      `${slugMismatches.length} projected Experience slug mismatch(es) detected.`,
+    );
+  }
+  if (categoryMismatches.length > 0) {
+    blockers.push(
+      `${categoryMismatches.length} projected Experience category mismatch(es) detected.`,
+    );
+  }
+  if (knownCorrectionFailures.length > 0) {
+    blockers.push(
+      `${knownCorrectionFailures.length} known protected-title field correction(s) do not match the reviewed payload.`,
+    );
+  }
+
+  return {
+    blockers,
+    protectedOldNameMatches,
+    protectedOldNameMatchCount: protectedOldNameMatches.length,
+    cmsDestinationCoverage: {
+      requiredFields: CMS_DESTINATION_FIELDS,
+      frontendSupplementDestinations: FRONTEND_SUPPLEMENT_DESTINATIONS,
+      missing: cmsDestinationMissing,
+      blockers: cmsDestinationMissing.length,
+    },
+    slugMismatches,
+    categoryMismatches,
+    knownFieldCorrections,
+    knownCorrectionFailures,
+  };
+}
+
+function assertPreflightReady(...validations) {
+  const blockers = validations.flatMap((validation) => validation.blockers);
+  if (blockers.length > 0) {
+    throw new Error(`Migration preflight blockers: ${blockers.join(" | ")}`);
+  }
 }
 
 function loadPayload() {
@@ -252,8 +752,14 @@ function validatePayload(payload) {
   if (prohibitedMatches.length > 0)
     blockers.push(`BLACK prohibited claims: ${prohibitedMatches.join(", ")}`);
 
-  if (Object.keys(payload.titleReplacements || {}).length === 0) {
-    warnings.push("Title replacement scan map is empty.");
+  for (const [obsolete, replacement] of Object.entries(
+    EXPECTED_TITLE_REPLACEMENTS,
+  )) {
+    if (payload.titleReplacements?.[obsolete] !== replacement) {
+      blockers.push(
+        `Title replacement assertion is missing or incorrect: ${obsolete} -> ${replacement}.`,
+      );
+    }
   }
 
   return {
@@ -456,7 +962,13 @@ async function inspectProduction(client, payload) {
   };
 }
 
-async function runDryRun(options, payload, payloadValidation, backup) {
+async function runDryRun(
+  options,
+  payload,
+  payloadValidation,
+  projectedValidation,
+  backup,
+) {
   const connectionString = getConnectionString();
   if (!connectionString)
     throw new Error("DATABASE_PUBLIC_URL or DATABASE_URL is required.");
@@ -476,7 +988,10 @@ async function runDryRun(options, payload, payloadValidation, backup) {
     const production = await inspectProduction(client, payload);
     await client.query("ROLLBACK");
 
-    const blockers = [...payloadValidation.blockers];
+    const blockers = [
+      ...payloadValidation.blockers,
+      ...projectedValidation.blockers,
+    ];
     if (production.database.experienceRows !== 84)
       blockers.push(
         `Production Experience row count is ${production.database.experienceRows}, expected 84.`,
@@ -506,6 +1021,7 @@ async function runDryRun(options, payload, payloadValidation, backup) {
       },
       backup,
       payload: payloadValidation,
+      projectedCms: projectedValidation,
       production,
       expectedApplyGuard: {
         projectId: EXPECTED.projectId,
@@ -757,11 +1273,13 @@ async function applyCategories(strapi, payload, mediaIds, summary) {
   }
 }
 
-async function runApply(options, payload, payloadValidation) {
-  if (payloadValidation.blockers.length > 0)
-    throw new Error(
-      `Payload blockers: ${payloadValidation.blockers.join(" | ")}`,
-    );
+async function runApply(
+  options,
+  payload,
+  payloadValidation,
+  projectedValidation,
+) {
+  assertPreflightReady(payloadValidation, projectedValidation);
   assertApplyGuards(options);
   await assertApplySchema();
 
@@ -794,21 +1312,49 @@ async function runApply(options, payload, payloadValidation) {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
-  const backup = verifyBackup(path.resolve(options.backupDir));
+  const backupDir = path.resolve(options.backupDir);
+  const backup = verifyBackup(backupDir);
   const payload = loadPayload();
   const payloadValidation = validatePayload(payload);
+  const projectedState = buildProjectedCmsState(payload, backupDir);
+  const projectedValidation = validateProjectedCmsState(
+    projectedState,
+    payload,
+  );
 
   if (options.mode === "dry-run") {
-    await runDryRun(options, payload, payloadValidation, backup);
+    await runDryRun(
+      options,
+      payload,
+      payloadValidation,
+      projectedValidation,
+      backup,
+    );
     return;
   }
 
-  await runApply(options, payload, payloadValidation);
+  await runApply(options, payload, payloadValidation, projectedValidation);
 }
 
-main().catch((error) => {
-  console.error(
-    `Migration ${process.argv.includes("--apply") ? "apply" : "dry-run"} failed: ${error.message}`,
-  );
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(
+      `Migration ${process.argv.includes("--apply") ? "apply" : "dry-run"} failed: ${error.message}`,
+    );
+    process.exitCode = 1;
+  });
+}
+
+module.exports = {
+  CMS_DESTINATION_FIELDS,
+  EXPECTED_TITLE_REPLACEMENTS,
+  FRONTEND_SUPPLEMENT_DESTINATIONS,
+  KNOWN_PROTECTED_FIELD_CORRECTIONS,
+  assertPreflightReady,
+  buildProjectedCmsState,
+  buildProjectedExperienceRecord,
+  findProtectedNameMatches,
+  normalizeProtectedComparison,
+  validatePayload,
+  validateProjectedCmsState,
+};
