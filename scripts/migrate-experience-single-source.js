@@ -13,6 +13,44 @@ const PAYLOAD_PATH = path.join(
   "migrations",
   "experience-single-source-v1.json",
 );
+const LENGTH_CONSTRAINT_MODELS = {
+  experience: {
+    tableName: "experiences",
+    schemaPath: path.join(
+      ROOT_DIR,
+      "src",
+      "api",
+      "experience",
+      "content-types",
+      "experience",
+      "schema.json",
+    ),
+  },
+  landing: {
+    tableName: "experience_landings",
+    schemaPath: path.join(
+      ROOT_DIR,
+      "src",
+      "api",
+      "experience-landing",
+      "content-types",
+      "experience-landing",
+      "schema.json",
+    ),
+  },
+  category: {
+    tableName: "experience_category_pages",
+    schemaPath: path.join(
+      ROOT_DIR,
+      "src",
+      "api",
+      "experience-category-page",
+      "content-types",
+      "experience-category-page",
+      "schema.json",
+    ),
+  },
+};
 const EXPECTED = {
   projectId: "a4539684-c08f-4ea4-9f0c-aaa1f0c0b682",
   environmentId: "a03e18cb-f063-41ed-ac0b-e46f419d63d5",
@@ -47,6 +85,188 @@ const FIELD_LIMITS = {
   hero_alt_text: 300,
   one_line_hook: 500,
 };
+
+function countPostgresCharacters(value) {
+  return Array.from(value).length;
+}
+
+function loadLengthConstraintSchemas() {
+  return Object.fromEntries(
+    Object.entries(LENGTH_CONSTRAINT_MODELS).map(([key, model]) => [
+      key,
+      {
+        ...model,
+        schema: JSON.parse(fs.readFileSync(model.schemaPath, "utf8")),
+      },
+    ]),
+  );
+}
+
+function buildLengthConstraints(modelSchemas, databaseColumns) {
+  const constraints = {};
+
+  for (const [modelKey, model] of Object.entries(modelSchemas)) {
+    constraints[modelKey] = {};
+    const tableColumns = databaseColumns[model.tableName] || {};
+    for (const [field, attribute] of Object.entries(
+      model.schema.attributes || {},
+    )) {
+      if (!["string", "text"].includes(attribute.type)) continue;
+      const databaseColumn = tableColumns[field] || null;
+      const applicationMaxLength = Number.isInteger(attribute.maxLength)
+        ? attribute.maxLength
+        : null;
+      const databaseMaxLength = Number.isInteger(
+        databaseColumn?.characterMaximumLength,
+      )
+        ? databaseColumn.characterMaximumLength
+        : null;
+      const intrinsicStringMaxLength = attribute.type === "string" ? 255 : null;
+      const candidates = [
+        applicationMaxLength,
+        databaseMaxLength,
+        intrinsicStringMaxLength,
+      ].filter(Number.isInteger);
+      if (candidates.length === 0) continue;
+
+      constraints[modelKey][field] = {
+        model: modelKey,
+        tableName: model.tableName,
+        field,
+        attributeType: attribute.type,
+        localized: attribute.pluginOptions?.i18n?.localized === true,
+        applicationMaxLength,
+        databaseType: databaseColumn?.dataType || null,
+        databaseMaxLength,
+        permittedLength: Math.min(...candidates),
+      };
+    }
+  }
+
+  return constraints;
+}
+
+function buildPlannedLengthTargets(payload) {
+  const targets = [];
+  const addTargets = ({
+    model,
+    documentFamily,
+    locale,
+    values,
+    fieldPrefix,
+  }) => {
+    for (const status of ["draft", "published"]) {
+      targets.push({
+        model,
+        documentFamily,
+        locale,
+        status,
+        values,
+        fieldPrefix,
+      });
+    }
+  };
+
+  for (const record of payload.records || []) {
+    addTargets({
+      model: "experience",
+      documentFamily: record.documentId,
+      locale: record.locale,
+      values: record.fields || {},
+      fieldPrefix: `records.${record.documentId}.${record.locale}.fields`,
+    });
+  }
+  for (const [locale, values] of Object.entries(payload.landing || {})) {
+    addTargets({
+      model: "landing",
+      documentFamily: "experience-landing",
+      locale,
+      values,
+      fieldPrefix: `landing.${locale}`,
+    });
+  }
+  for (const [key, category] of Object.entries(payload.categories || {})) {
+    for (const [locale, values] of Object.entries(category.locales || {})) {
+      addTargets({
+        model: "category",
+        documentFamily: `experience-category:${key}`,
+        locale,
+        values,
+        fieldPrefix: `categories.${key}.locales.${locale}`,
+      });
+    }
+  }
+
+  return targets;
+}
+
+function validatePlannedFieldLengths(payload, constraints) {
+  const violations = [];
+  let checkedValues = 0;
+
+  for (const target of buildPlannedLengthTargets(payload)) {
+    for (const constraint of Object.values(constraints[target.model] || {})) {
+      const value = target.values[constraint.field];
+      if (typeof value !== "string") continue;
+      checkedValues += 1;
+      const actualLength = countPostgresCharacters(value);
+      if (actualLength <= constraint.permittedLength) continue;
+      violations.push({
+        documentFamily: target.documentFamily,
+        locale: target.locale,
+        targetStatus: target.status,
+        fieldPath: `${target.fieldPrefix}.${constraint.field}`,
+        field: constraint.field,
+        actualLength,
+        permittedLength: constraint.permittedLength,
+        applicationMaxLength: constraint.applicationMaxLength,
+        databaseType: constraint.databaseType,
+        databaseMaxLength: constraint.databaseMaxLength,
+      });
+    }
+  }
+
+  const imperialRecord = (payload.records || []).find(
+    (record) =>
+      record.locale === "tr-TR" &&
+      record.slug === "imperial-flavors-culinary-atelier",
+  );
+  const imperialConstraint = constraints.experience?.short_description;
+  const imperialValue = imperialRecord?.fields?.short_description;
+  const imperialFlavorsShortDescription = {
+    documentFamily: imperialRecord?.documentId || null,
+    locale: imperialRecord?.locale || null,
+    fieldPath: imperialRecord
+      ? `records.${imperialRecord.documentId}.${imperialRecord.locale}.fields.short_description`
+      : null,
+    actualLength:
+      typeof imperialValue === "string"
+        ? countPostgresCharacters(imperialValue)
+        : null,
+    permittedLength: imperialConstraint?.permittedLength || null,
+    applicationMaxLength: imperialConstraint?.applicationMaxLength || null,
+    databaseType: imperialConstraint?.databaseType || null,
+    databaseMaxLength: imperialConstraint?.databaseMaxLength || null,
+    passes:
+      typeof imperialValue === "string" && imperialConstraint
+        ? countPostgresCharacters(imperialValue) <=
+          imperialConstraint.permittedLength
+        : false,
+  };
+  const blockers = violations.map(
+    (violation) =>
+      `${violation.documentFamily}:${violation.locale}:${violation.targetStatus} ${violation.fieldPath} exceeds ${violation.permittedLength} characters (${violation.actualLength}).`,
+  );
+
+  return {
+    blockers,
+    lengthConstraintBlockers: violations.length,
+    violations,
+    checkedValues,
+    constraints,
+    imperialFlavorsShortDescription,
+  };
+}
 
 const PROHIBITED_BLACK_CLAIMS = [
   "by invitation",
@@ -699,9 +919,9 @@ function validatePayload(payload) {
       blockers.push(`Missing slug/title for ${identity}`);
     for (const [field, limit] of Object.entries(FIELD_LIMITS)) {
       const value = record.fields?.[field];
-      if (typeof value === "string" && value.length > limit) {
+      if (typeof value === "string" && countPostgresCharacters(value) > limit) {
         blockers.push(
-          `${identity} ${field} exceeds ${limit} characters (${value.length}).`,
+          `${identity} ${field} exceeds ${limit} characters (${countPostgresCharacters(value)}).`,
         );
       }
     }
@@ -789,6 +1009,40 @@ async function getTableColumns(client, tableName) {
     [tableName],
   );
   return result.rows.map((row) => row.column_name);
+}
+
+async function getDatabaseLengthColumns(client) {
+  const tableNames = Object.values(LENGTH_CONSTRAINT_MODELS).map(
+    (model) => model.tableName,
+  );
+  const result = await client.query(
+    `SELECT table_name, column_name, data_type, udt_name,
+            character_maximum_length
+     FROM information_schema.columns
+     WHERE table_schema = 'public' AND table_name = ANY($1::text[])
+     ORDER BY table_name, ordinal_position`,
+    [tableNames],
+  );
+  const columns = {};
+  for (const row of result.rows) {
+    columns[row.table_name] ||= {};
+    columns[row.table_name][row.column_name] = {
+      dataType: row.data_type,
+      udtName: row.udt_name,
+      characterMaximumLength:
+        row.character_maximum_length === null
+          ? null
+          : Number(row.character_maximum_length),
+    };
+  }
+  return columns;
+}
+
+async function inspectLengthConstraints(client, payload) {
+  const modelSchemas = loadLengthConstraintSchemas();
+  const databaseColumns = await getDatabaseLengthColumns(client);
+  const constraints = buildLengthConstraints(modelSchemas, databaseColumns);
+  return validatePlannedFieldLengths(payload, constraints);
 }
 
 async function tableExists(client, tableName) {
@@ -985,12 +1239,14 @@ async function runDryRun(
               current_user AS db_user, current_setting('transaction_read_only') AS transaction_read_only,
               version() AS version`,
     );
+    const lengthValidation = await inspectLengthConstraints(client, payload);
     const production = await inspectProduction(client, payload);
     await client.query("ROLLBACK");
 
     const blockers = [
       ...payloadValidation.blockers,
       ...projectedValidation.blockers,
+      ...lengthValidation.blockers,
     ];
     if (production.database.experienceRows !== 84)
       blockers.push(
@@ -1022,6 +1278,8 @@ async function runDryRun(
       backup,
       payload: payloadValidation,
       projectedCms: projectedValidation,
+      lengthConstraints: lengthValidation,
+      lengthConstraintBlockers: lengthValidation.lengthConstraintBlockers,
       production,
       expectedApplyGuard: {
         projectId: EXPECTED.projectId,
@@ -1100,6 +1358,31 @@ async function assertApplySchema() {
         `Refusing apply before schema deployment. Missing columns: ${missingColumns.join(", ") || "none"}; landing table: ${landingPresent}; category table: ${categoriesPresent}.`,
       );
     }
+  } finally {
+    await client.end();
+  }
+}
+
+async function assertProductionLengthConstraints(payload) {
+  const connectionString = getConnectionString();
+  if (!connectionString)
+    throw new Error("DATABASE_PUBLIC_URL or DATABASE_URL is required.");
+  const client = new Client({
+    connectionString,
+    ssl: { rejectUnauthorized: false },
+  });
+  await client.connect();
+  try {
+    await client.query("BEGIN READ ONLY");
+    const lengthValidation = await inspectLengthConstraints(client, payload);
+    await client.query("ROLLBACK");
+    assertPreflightReady(lengthValidation);
+    return lengthValidation;
+  } catch (error) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {}
+    throw error;
   } finally {
     await client.end();
   }
@@ -1281,6 +1564,7 @@ async function runApply(
 ) {
   assertPreflightReady(payloadValidation, projectedValidation);
   assertApplyGuards(options);
+  const lengthValidation = await assertProductionLengthConstraints(payload);
   await assertApplySchema();
 
   const { compileStrapi, createStrapi } = require("@strapi/strapi");
@@ -1293,6 +1577,8 @@ async function runApply(
     landingLocalizationsChanged: 0,
     categoryLocalizationsChanged: 0,
     mediaAssetsEnsured: 0,
+    lengthConstraintBlockers: lengthValidation.lengthConstraintBlockers,
+    transactionCommitted: false,
   };
 
   try {
@@ -1304,6 +1590,7 @@ async function runApply(
       await applyLanding(strapi, payload, mediaIds, summary);
       await applyCategories(strapi, payload, mediaIds, summary);
     });
+    summary.transactionCommitted = true;
     console.log(JSON.stringify(summary, null, 2));
   } finally {
     await strapi.destroy();
@@ -1351,10 +1638,14 @@ module.exports = {
   FRONTEND_SUPPLEMENT_DESTINATIONS,
   KNOWN_PROTECTED_FIELD_CORRECTIONS,
   assertPreflightReady,
+  buildLengthConstraints,
+  buildPlannedLengthTargets,
   buildProjectedCmsState,
   buildProjectedExperienceRecord,
+  countPostgresCharacters,
   findProtectedNameMatches,
   normalizeProtectedComparison,
   validatePayload,
+  validatePlannedFieldLengths,
   validateProjectedCmsState,
 };

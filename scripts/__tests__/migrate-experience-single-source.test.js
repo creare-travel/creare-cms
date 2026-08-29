@@ -10,9 +10,12 @@ const {
   EXPECTED_TITLE_REPLACEMENTS,
   KNOWN_PROTECTED_FIELD_CORRECTIONS,
   assertPreflightReady,
+  buildLengthConstraints,
   buildProjectedExperienceRecord,
+  countPostgresCharacters,
   findProtectedNameMatches,
   validatePayload,
+  validatePlannedFieldLengths,
   validateProjectedCmsState,
 } = require("../migrate-experience-single-source.js");
 
@@ -28,6 +31,84 @@ const payload = JSON.parse(
     "utf8",
   ),
 );
+const experienceSchema = JSON.parse(
+  fs.readFileSync(
+    path.join(
+      ROOT_DIR,
+      "src",
+      "api",
+      "experience",
+      "content-types",
+      "experience",
+      "schema.json",
+    ),
+    "utf8",
+  ),
+);
+const landingSchema = JSON.parse(
+  fs.readFileSync(
+    path.join(
+      ROOT_DIR,
+      "src",
+      "api",
+      "experience-landing",
+      "content-types",
+      "experience-landing",
+      "schema.json",
+    ),
+    "utf8",
+  ),
+);
+const categorySchema = JSON.parse(
+  fs.readFileSync(
+    path.join(
+      ROOT_DIR,
+      "src",
+      "api",
+      "experience-category-page",
+      "content-types",
+      "experience-category-page",
+      "schema.json",
+    ),
+    "utf8",
+  ),
+);
+
+function makeLengthConstraints(
+  shortDescriptionColumn = {
+    dataType: "text",
+    characterMaximumLength: null,
+  },
+) {
+  return buildLengthConstraints(
+    {
+      experience: {
+        tableName: "experiences",
+        schema: experienceSchema,
+      },
+      landing: {
+        tableName: "experience_landings",
+        schema: landingSchema,
+      },
+      category: {
+        tableName: "experience_category_pages",
+        schema: categorySchema,
+      },
+    },
+    {
+      experiences: {
+        short_description: shortDescriptionColumn,
+      },
+      experience_landings: {
+        hero_title: {
+          dataType: "character varying",
+          characterMaximumLength: 255,
+        },
+      },
+      experience_category_pages: {},
+    },
+  );
+}
 
 const LAB_SLUGS = new Set([
   "bodrum-beach-games-rhythm-competition-celebration",
@@ -226,4 +307,102 @@ test("projection never accepts a payload slug as a writable field", () => {
 
   assert.equal(projected.slug, "frozen-canonical-slug");
   assert.equal(source.slug, "frozen-canonical-slug");
+});
+
+test("Experience short_description is localized text with a 700-character limit", () => {
+  const attribute = experienceSchema.attributes.short_description;
+  assert.equal(attribute.type, "text");
+  assert.equal(attribute.maxLength, 700);
+  assert.equal(attribute.pluginOptions.i18n.localized, true);
+  assert.equal(attribute.required, undefined);
+});
+
+test("the approved 269-character Imperial Flavors short description passes 700", () => {
+  const validation = validatePlannedFieldLengths(
+    payload,
+    makeLengthConstraints(),
+  );
+  assert.equal(validation.lengthConstraintBlockers, 0);
+  assert.equal(validation.imperialFlavorsShortDescription.actualLength, 269);
+  assert.equal(validation.imperialFlavorsShortDescription.permittedLength, 700);
+  assert.equal(validation.imperialFlavorsShortDescription.passes, true);
+});
+
+test("the actual database varchar limit overrides the widened application limit", () => {
+  const validation = validatePlannedFieldLengths(
+    payload,
+    makeLengthConstraints({
+      dataType: "character varying",
+      characterMaximumLength: 255,
+    }),
+  );
+  const imperialViolations = validation.violations.filter(
+    (violation) =>
+      violation.documentFamily === "a5fl4lc5kkl3okseczixktre" &&
+      violation.locale === "tr-TR" &&
+      violation.field === "short_description",
+  );
+  assert.equal(imperialViolations.length, 2);
+  assert.equal(validation.imperialFlavorsShortDescription.permittedLength, 255);
+  assert.equal(validation.imperialFlavorsShortDescription.passes, false);
+});
+
+test("a 701-character short description blocks draft and published targets", () => {
+  const fixture = structuredClone(payload);
+  const target = fixture.records.find(
+    (record) =>
+      record.locale === "tr-TR" &&
+      record.slug === "imperial-flavors-culinary-atelier",
+  );
+  target.fields.short_description = "a".repeat(701);
+
+  const validation = validatePlannedFieldLengths(
+    fixture,
+    makeLengthConstraints(),
+  );
+  const violations = validation.violations.filter(
+    (violation) => violation.field === "short_description",
+  );
+  assert.equal(violations.length, 2);
+  assert.deepEqual(
+    violations.map((violation) => violation.targetStatus).sort(),
+    ["draft", "published"],
+  );
+  assert.ok(
+    violations.every(
+      (violation) =>
+        violation.actualLength === 701 && violation.permittedLength === 700,
+    ),
+  );
+  assert.throws(
+    () => assertPreflightReady(validation),
+    /Migration preflight blockers/,
+  );
+});
+
+test("another varchar(255) payload field remains blocked", () => {
+  const fixture = structuredClone(payload);
+  fixture.landing.en.hero_title = "x".repeat(256);
+  const validation = validatePlannedFieldLengths(
+    fixture,
+    makeLengthConstraints(),
+  );
+  const violations = validation.violations.filter(
+    (violation) => violation.fieldPath === "landing.en.hero_title",
+  );
+  assert.equal(violations.length, 2);
+  assert.ok(
+    violations.every(
+      (violation) =>
+        violation.actualLength === 256 && violation.permittedLength === 255,
+    ),
+  );
+});
+
+test("PostgreSQL-compatible character counts handle Turkish and Chinese", () => {
+  assert.equal(countPostgresCharacters("İstanbul"), 8);
+  assert.equal(countPostgresCharacters("文化世界"), 4);
+  assert.equal(countPostgresCharacters("体验".repeat(350)), 700);
+  assert.equal(countPostgresCharacters("ğ".repeat(701)), 701);
+  assert.equal(countPostgresCharacters("🧭"), 1);
 });

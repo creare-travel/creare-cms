@@ -45,7 +45,8 @@
             ]
         },
         "short_description": {
-            "type": "string",
+            "type": "text",
+            "maxLength": 700,
             "pluginOptions": {
                 "i18n": {
                     "localized": true

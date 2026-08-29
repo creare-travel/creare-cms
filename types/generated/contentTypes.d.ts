@@ -1212,11 +1212,14 @@ export interface ApiExperienceExperience extends Struct.CollectionTypeSchema {
           localized: true;
         };
       }>;
-    short_description: Schema.Attribute.String &
+    short_description: Schema.Attribute.Text &
       Schema.Attribute.SetPluginOptions<{
         i18n: {
           localized: true;
         };
+      }> &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 700;
       }>;
     slug: Schema.Attribute.String &
       Schema.Attribute.Required &
