@@ -107,6 +107,246 @@
     "og_description": {
       "type": "text",
       "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "signature_positioning_title": {
+      "type": "string",
+      "maxLength": 160,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "signature_positioning_body_1": {
+      "type": "text",
+      "maxLength": 900,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "signature_positioning_body_2": {
+      "type": "text",
+      "maxLength": 900,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "signature_positioning_body_3": {
+      "type": "text",
+      "maxLength": 900,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "signature_composition_title": {
+      "type": "string",
+      "maxLength": 160,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "signature_composition_body": {
+      "type": "text",
+      "maxLength": 900,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "signature_distinction_body": {
+      "type": "text",
+      "maxLength": 700,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "signature_inquiry_title": {
+      "type": "string",
+      "maxLength": 120,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "signature_inquiry_body": {
+      "type": "text",
+      "maxLength": 700,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "lab_definition_body": {
+      "type": "text",
+      "maxLength": 900,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "lab_context_title": {
+      "type": "string",
+      "maxLength": 160,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "lab_context_body": {
+      "type": "text",
+      "maxLength": 900,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "lab_principles_eyebrow": {
+      "type": "string",
+      "maxLength": 80,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "lab_principles_title": {
+      "type": "string",
+      "maxLength": 160,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "lab_principle_1_title": {
+      "type": "string",
+      "maxLength": 80,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "lab_principle_1_body": {
+      "type": "text",
+      "maxLength": 400,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "lab_principle_2_title": {
+      "type": "string",
+      "maxLength": 80,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "lab_principle_2_body": {
+      "type": "text",
+      "maxLength": 400,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "lab_principle_3_title": {
+      "type": "string",
+      "maxLength": 80,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "lab_principle_3_body": {
+      "type": "text",
+      "maxLength": 400,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "lab_audience_title": {
+      "type": "string",
+      "maxLength": 160,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "lab_audience_body_1": {
+      "type": "text",
+      "maxLength": 900,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "lab_audience_body_2": {
+      "type": "text",
+      "maxLength": 900,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "lab_process_eyebrow": {
+      "type": "string",
+      "maxLength": 80,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "lab_process_title": {
+      "type": "string",
+      "maxLength": 160,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "lab_process_step_1_title": {
+      "type": "string",
+      "maxLength": 80,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "lab_process_step_1_body": {
+      "type": "text",
+      "maxLength": 500,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "lab_process_step_2_title": {
+      "type": "string",
+      "maxLength": 80,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "lab_process_step_2_body": {
+      "type": "text",
+      "maxLength": 500,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "lab_process_step_3_title": {
+      "type": "string",
+      "maxLength": 80,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "lab_process_step_3_body": {
+      "type": "text",
+      "maxLength": 500,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "lab_process_step_4_title": {
+      "type": "string",
+      "maxLength": 80,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "lab_process_step_4_body": {
+      "type": "text",
+      "maxLength": 500,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "lab_closing_body": {
+      "type": "text",
+      "maxLength": 700,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "black_context_title": {
+      "type": "string",
+      "maxLength": 160,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "black_context_body": {
+      "type": "text",
+      "maxLength": 700,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "black_process_eyebrow": {
+      "type": "string",
+      "maxLength": 80,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "black_process_title": {
+      "type": "string",
+      "maxLength": 160,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "black_process_step_1_title": {
+      "type": "string",
+      "maxLength": 80,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "black_process_step_1_body": {
+      "type": "text",
+      "maxLength": 500,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "black_process_step_2_title": {
+      "type": "string",
+      "maxLength": 80,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "black_process_step_2_body": {
+      "type": "text",
+      "maxLength": 500,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "black_process_step_3_title": {
+      "type": "string",
+      "maxLength": 80,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "black_process_step_3_body": {
+      "type": "text",
+      "maxLength": 500,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "black_process_step_4_title": {
+      "type": "string",
+      "maxLength": 80,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "black_process_step_4_body": {
+      "type": "text",
+      "maxLength": 500,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "black_conditions_title": {
+      "type": "string",
+      "maxLength": 160,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "black_conditions_body": {
+      "type": "text",
+      "maxLength": 900,
+      "pluginOptions": { "i18n": { "localized": true } }
     }
   }
 }

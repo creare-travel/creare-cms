@@ -1,0 +1,104 @@
+{
+  "kind": "singleType",
+  "collectionName": "cultural_world_pages",
+  "info": {
+    "singularName": "cultural-world-page",
+    "pluralName": "cultural-world-pages",
+    "displayName": "Cultural Worlds Page"
+  },
+  "options": {
+    "draftAndPublish": true
+  },
+  "pluginOptions": {
+    "i18n": {
+      "localized": true
+    }
+  },
+  "attributes": {
+    "eyebrow": {
+      "type": "string",
+      "maxLength": 80,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "hero_title": {
+      "type": "string",
+      "maxLength": 160,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "hero_subtitle": {
+      "type": "text",
+      "maxLength": 500,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "atlas_eyebrow": {
+      "type": "string",
+      "maxLength": 80,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "atlas_title": {
+      "type": "string",
+      "maxLength": 180,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "atlas_body": {
+      "type": "text",
+      "maxLength": 1200,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "destination_section_eyebrow": {
+      "type": "string",
+      "maxLength": 80,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "destination_section_title": {
+      "type": "string",
+      "maxLength": 180,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "destination_section_supporting_text": {
+      "type": "text",
+      "maxLength": 500,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "rail_previous_label": {
+      "type": "string",
+      "maxLength": 80,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "rail_next_label": {
+      "type": "string",
+      "maxLength": 80,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "destination_cta_label": {
+      "type": "string",
+      "maxLength": 80,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "seo_title": {
+      "type": "string",
+      "maxLength": 160,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "seo_description": {
+      "type": "text",
+      "maxLength": 320,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "og_description": {
+      "type": "text",
+      "maxLength": 320,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "hero_alt_text": {
+      "type": "string",
+      "maxLength": 300,
+      "pluginOptions": { "i18n": { "localized": true } }
+    },
+    "hero_image": {
+      "type": "media",
+      "multiple": false,
+      "allowedTypes": ["images"]
+    }
+  }
+}
