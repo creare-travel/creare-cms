@@ -125,6 +125,61 @@ const SPECIFIC_CATEGORY_FIELDS = {
     "black_conditions_body",
   ],
 };
+const SCALAR_ATTRIBUTE_TYPES = new Set([
+  "string",
+  "text",
+  "integer",
+  "biginteger",
+  "float",
+  "decimal",
+  "boolean",
+  "date",
+  "datetime",
+  "time",
+  "enumeration",
+  "json",
+]);
+const MEDIA_ATTRIBUTE_CONTRACTS = {
+  culturalWorlds: {
+    contentTypeUid: "api::cultural-world-page.cultural-world-page",
+    attributes: {
+      hero_image: {
+        type: "media",
+        multiple: false,
+        required: false,
+        localized: false,
+        allowedTypes: ["images"],
+      },
+    },
+  },
+  category: {
+    contentTypeUid: "api::experience-category-page.experience-category-page",
+    attributes: {
+      hero_image: {
+        type: "media",
+        multiple: false,
+        required: false,
+        localized: false,
+        allowedTypes: ["images"],
+      },
+      card_image: {
+        type: "media",
+        multiple: false,
+        required: false,
+        localized: false,
+        allowedTypes: ["images"],
+      },
+    },
+  },
+};
+const UPLOAD_FILE_COLUMNS = ["id", "url", "provider", "provider_metadata"];
+const MEDIA_RELATION_COLUMNS = [
+  "file_id",
+  "related_id",
+  "related_type",
+  "field",
+  "order",
+];
 const BLACK_PROHIBITED_PATTERNS = [
   /\bbespoke\b/iu,
   /invitation[- ]only/iu,
@@ -527,7 +582,7 @@ async function readDatabaseColumns(client, schemas) {
     }
     const rows = (
       await client.query(
-        `SELECT column_name, data_type, character_maximum_length FROM information_schema.columns WHERE table_schema='public' AND table_name=$1`,
+        `SELECT column_name, data_type, character_maximum_length, is_nullable FROM information_schema.columns WHERE table_schema='public' AND table_name=$1`,
         [model.tableName],
       )
     ).rows;
@@ -537,11 +592,290 @@ async function readDatabaseColumns(client, schemas) {
         {
           dataType: row.data_type,
           characterMaximumLength: row.character_maximum_length,
+          isNullable: row.is_nullable,
         },
       ]),
     );
   }
   return result;
+}
+
+function isLocalized(attribute) {
+  return attribute?.pluginOptions?.i18n?.localized === true;
+}
+
+function compatibleScalarDatabaseTypes(attributeType) {
+  const compatible = {
+    string: ["character varying", "text"],
+    text: ["text"],
+    integer: ["integer", "smallint", "bigint"],
+    biginteger: ["bigint", "numeric", "character varying"],
+    float: ["real", "double precision", "numeric"],
+    decimal: ["numeric", "decimal"],
+    boolean: ["boolean"],
+    date: ["date"],
+    datetime: ["timestamp without time zone", "timestamp with time zone"],
+    time: ["time without time zone", "time with time zone"],
+    enumeration: ["character varying", "text"],
+    json: ["json", "jsonb"],
+  };
+  return compatible[attributeType] || [];
+}
+
+function validateMediaInfrastructure(infrastructure) {
+  const blockers = [];
+  const filesColumns = new Set(infrastructure.filesTable?.columns || []);
+  if (!infrastructure.filesTable?.exists) {
+    blockers.push("Strapi upload files table is missing.");
+  } else {
+    const missing = UPLOAD_FILE_COLUMNS.filter(
+      (column) => !filesColumns.has(column),
+    );
+    if (missing.length)
+      blockers.push(
+        `Strapi upload metadata columns missing: ${missing.join(", ")}`,
+      );
+  }
+
+  const candidates = infrastructure.relationTables || [];
+  if (candidates.length !== 1) {
+    blockers.push(
+      `Expected exactly one Strapi media relation table, found ${candidates.length}.`,
+    );
+  } else {
+    const columns = new Set(candidates[0].columns || []);
+    const missing = MEDIA_RELATION_COLUMNS.filter(
+      (column) => !columns.has(column),
+    );
+    if (missing.length)
+      blockers.push(`Media relation columns missing: ${missing.join(", ")}`);
+  }
+  return {
+    blockers,
+    valid: blockers.length === 0,
+    relationTableName: candidates.length === 1 ? candidates[0].tableName : null,
+  };
+}
+
+function validateSchemaDestinations(
+  schemas,
+  databaseColumns,
+  mediaInfrastructure,
+) {
+  const missingSchema = [];
+  const scalarMismatches = [];
+  const mediaAttributeMismatches = [];
+
+  for (const [modelKey, model] of Object.entries(schemas)) {
+    const columns = databaseColumns[model.tableName];
+    if (!columns) {
+      missingSchema.push(`${modelKey}:table`);
+      continue;
+    }
+    const expectedMedia = MEDIA_ATTRIBUTE_CONTRACTS[modelKey]?.attributes || {};
+    for (const [field, attribute] of Object.entries(
+      model.schema.attributes || {},
+    )) {
+      if (expectedMedia[field]) continue;
+      if (!SCALAR_ATTRIBUTE_TYPES.has(attribute.type)) continue;
+      const column = columns[field];
+      if (!column) {
+        missingSchema.push(`${modelKey}:${field}`);
+        continue;
+      }
+      const compatibleTypes = compatibleScalarDatabaseTypes(attribute.type);
+      if (!compatibleTypes.includes(column.dataType)) {
+        scalarMismatches.push({
+          modelKey,
+          field,
+          reason: "database-type",
+          expected: compatibleTypes,
+          actual: column.dataType,
+        });
+      }
+      if (
+        attribute.required !== true &&
+        column.isNullable &&
+        column.isNullable !== "YES"
+      ) {
+        scalarMismatches.push({
+          modelKey,
+          field,
+          reason: "nullability",
+          expected: "YES",
+          actual: column.isNullable,
+        });
+      }
+    }
+  }
+
+  for (const [modelKey, contract] of Object.entries(
+    MEDIA_ATTRIBUTE_CONTRACTS,
+  )) {
+    for (const [field, expected] of Object.entries(contract.attributes)) {
+      const actual = schemas[modelKey]?.schema?.attributes?.[field];
+      if (!actual) {
+        mediaAttributeMismatches.push({
+          modelKey,
+          field,
+          reason: "missing-schema-attribute",
+        });
+        continue;
+      }
+      const actualContract = {
+        type: actual.type,
+        multiple: actual.multiple === true,
+        required: actual.required === true,
+        localized: isLocalized(actual),
+        allowedTypes: [...(actual.allowedTypes || [])].sort(),
+      };
+      const expectedContract = {
+        ...expected,
+        allowedTypes: [...expected.allowedTypes].sort(),
+      };
+      if (JSON.stringify(actualContract) !== JSON.stringify(expectedContract)) {
+        mediaAttributeMismatches.push({
+          modelKey,
+          field,
+          reason: "contract-mismatch",
+          expected: expectedContract,
+          actual: actualContract,
+        });
+      }
+    }
+  }
+
+  const mediaInfrastructureValidation =
+    validateMediaInfrastructure(mediaInfrastructure);
+  const blockers = [];
+  if (missingSchema.length)
+    blockers.push(`Schema fields missing: ${missingSchema.join(", ")}`);
+  if (scalarMismatches.length)
+    blockers.push(`${scalarMismatches.length} scalar schema mismatch(es).`);
+  if (mediaAttributeMismatches.length)
+    blockers.push(
+      `${mediaAttributeMismatches.length} media attribute contract mismatch(es).`,
+    );
+  blockers.push(...mediaInfrastructureValidation.blockers);
+  return {
+    blockers,
+    missingSchema,
+    scalarMismatches,
+    mediaAttributeMismatches,
+    mediaInfrastructureValidation,
+  };
+}
+
+async function inspectMediaInfrastructure(client) {
+  const rows = (
+    await client.query(`
+      SELECT table_name, column_name
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+      ORDER BY table_name, ordinal_position
+    `)
+  ).rows;
+  const columnsByTable = new Map();
+  for (const row of rows) {
+    if (!columnsByTable.has(row.table_name))
+      columnsByTable.set(row.table_name, []);
+    columnsByTable.get(row.table_name).push(row.column_name);
+  }
+  const relationTables = [...columnsByTable.entries()]
+    .filter(([, columns]) =>
+      MEDIA_RELATION_COLUMNS.every((column) => columns.includes(column)),
+    )
+    .map(([tableName, columns]) => ({ tableName, columns }));
+  return {
+    filesTable: {
+      exists: columnsByTable.has("files"),
+      tableName: columnsByTable.has("files") ? "files" : null,
+      columns: columnsByTable.get("files") || [],
+    },
+    relationTables,
+  };
+}
+
+function validateCategoryMediaRelations({
+  categories,
+  files,
+  fileRelations,
+  payload,
+}) {
+  const mismatches = [];
+  let relationsChecked = 0;
+  for (const row of categories) {
+    for (const field of ["hero_image", "card_image"]) {
+      const relations = fileRelations.filter(
+        (item) =>
+          item.related_type ===
+            MEDIA_ATTRIBUTE_CONTRACTS.category.contentTypeUid &&
+          item.related_id === row.id &&
+          item.field === field,
+      );
+      relationsChecked += relations.length;
+      if (relations.length !== 1) {
+        mismatches.push({
+          key: row.key,
+          locale: row.locale,
+          status: rowStatus(row),
+          field,
+          reason: "relation-count",
+          actual: relations.length,
+          expected: 1,
+        });
+        continue;
+      }
+      const file = files.find((item) => item.id === relations[0].file_id);
+      const expectedPublicId = payload.categories[row.key]?.mediaPublicId;
+      if (file?.provider_metadata?.public_id !== expectedPublicId) {
+        mismatches.push({
+          key: row.key,
+          locale: row.locale,
+          status: rowStatus(row),
+          field,
+          reason: "media-identity",
+          mediaId: file?.id || null,
+          publicId: file?.provider_metadata?.public_id || null,
+          expectedPublicId,
+        });
+      }
+    }
+  }
+  return { mismatches, relationsChecked };
+}
+
+function validateProjectedCulturalMedia(payload, matchingFiles) {
+  const expected = {
+    publicId: "creare-cultural-world-hero-image",
+    url: "https://res.cloudinary.com/djr97wm0n/image/upload/v1780596665/creare-cultural-world-hero-image.jpg",
+    width: 10758,
+    height: 2746,
+    format: "jpg",
+    mime: "image/jpeg",
+  };
+  const media = payload.culturalWorlds?.media || {};
+  const identityMismatches = Object.entries(expected)
+    .filter(([field, value]) => media[field] !== value)
+    .map(([field, value]) => ({
+      field,
+      expected: value,
+      actual: media[field],
+    }));
+  const blockers = [];
+  if (identityMismatches.length)
+    blockers.push(
+      `${identityMismatches.length} Cultural Worlds media identity mismatch(es).`,
+    );
+  if (matchingFiles.length > 1)
+    blockers.push("Duplicate Cultural Worlds hero media records exist.");
+  return {
+    blockers,
+    identityMismatches,
+    existingMediaId: matchingFiles.length === 1 ? matchingFiles[0].id : null,
+    projectedRegistration: matchingFiles.length === 0 ? 1 : 0,
+    projectedUpload: 0,
+  };
 }
 
 async function readRows(client, tableName) {
@@ -588,6 +922,9 @@ function compareFrozenTables(current, backup) {
 }
 
 async function inspectProduction(client, payload, backupDir, schemas) {
+  const mediaInfrastructure = await inspectMediaInfrastructure(client);
+  const mediaInfrastructureValidation =
+    validateMediaInfrastructure(mediaInfrastructure);
   const requiredTables = [
     ...new Set([
       ...FROZEN_TABLES,
@@ -595,7 +932,9 @@ async function inspectProduction(client, payload, backupDir, schemas) {
       "experience_category_pages",
       "destinations",
       "files",
-      "files_related_mph",
+      ...(mediaInfrastructureValidation.relationTableName
+        ? [mediaInfrastructureValidation.relationTableName]
+        : []),
     ]),
   ];
   const current = {};
@@ -605,21 +944,21 @@ async function inspectProduction(client, payload, backupDir, schemas) {
       : [];
   const backupTables = loadBackupTables(backupDir);
   const databaseColumns = await readDatabaseColumns(client, schemas);
-  const missingSchema = [];
-  for (const [modelKey, model] of Object.entries(schemas)) {
-    const columns = databaseColumns[model.tableName];
-    if (!columns) missingSchema.push(`${modelKey}:table`);
-    else
-      for (const field of Object.keys(model.schema.attributes))
-        if (!columns[field]) missingSchema.push(`${modelKey}:${field}`);
-  }
+  const schemaDestinationValidation = validateSchemaDestinations(
+    schemas,
+    databaseColumns,
+    mediaInfrastructure,
+  );
+  const missingSchema = schemaDestinationValidation.missingSchema;
   const experiences = current.experiences;
   const insights = current.insights;
   const categories = current.experience_category_pages;
   const culturalWorlds = current.cultural_world_pages;
   const destinations = current.destinations;
   const files = current.files;
-  const fileRelations = current.files_related_mph;
+  const fileRelations = mediaInfrastructureValidation.relationTableName
+    ? current[mediaInfrastructureValidation.relationTableName]
+    : [];
   const localeStatusCounts = (rows) =>
     Object.fromEntries(
       EXPECTED.locales.map((locale) => [
@@ -684,37 +1023,22 @@ async function inspectProduction(client, payload, backupDir, schemas) {
       ),
     })),
   );
-  const categoryMediaMismatches = [];
-  for (const row of categories)
-    for (const field of ["hero_image", "card_image"]) {
-      const relation = fileRelations.find(
-        (item) =>
-          item.related_type ===
-            "api::experience-category-page.experience-category-page" &&
-          item.related_id === row.id &&
-          item.field === field,
-      );
-      const file = relation
-        ? files.find((item) => item.id === relation.file_id)
-        : null;
-      if (
-        file?.provider_metadata?.public_id !==
-        payload.categories[row.key]?.mediaPublicId
-      )
-        categoryMediaMismatches.push({
-          key: row.key,
-          locale: row.locale,
-          status: rowStatus(row),
-          field,
-          mediaId: file?.id || null,
-          publicId: file?.provider_metadata?.public_id || null,
-        });
-    }
+  const categoryMediaValidation = validateCategoryMediaRelations({
+    categories,
+    files,
+    fileRelations,
+    payload,
+  });
+  const categoryMediaMismatches = categoryMediaValidation.mismatches;
   const culturalMediaMatches = files.filter(
     (file) =>
       file.url === payload.culturalWorlds.media.url ||
       file.provider_metadata?.public_id ===
         payload.culturalWorlds.media.publicId,
+  );
+  const projectedCulturalMediaValidation = validateProjectedCulturalMedia(
+    payload,
+    culturalMediaMatches,
   );
   const categoryLocalizationsToUpdate = [];
   for (const key of EXPECTED.categoryKeys)
@@ -782,8 +1106,7 @@ async function inspectProduction(client, payload, backupDir, schemas) {
     (row) => row.category === "black",
   );
   const blockers = [];
-  if (missingSchema.length > 0)
-    blockers.push(`Schema fields missing: ${missingSchema.join(", ")}`);
+  blockers.push(...schemaDestinationValidation.blockers);
   if (
     experiences.length !== EXPECTED.experienceRows ||
     new Set(experiences.map((row) => row.document_id)).size !==
@@ -818,8 +1141,7 @@ async function inspectProduction(client, payload, backupDir, schemas) {
     blockers.push(
       `${categoryMediaMismatches.length} category media relation mismatch(es).`,
     );
-  if (culturalMediaMatches.length > 1)
-    blockers.push("Duplicate Cultural Worlds hero media records exist.");
+  blockers.push(...projectedCulturalMediaValidation.blockers);
   if (destinationIdentityMismatches.length > 0)
     blockers.push(
       `${destinationIdentityMismatches.length} Destination identity mismatch(es).`,
@@ -834,6 +1156,17 @@ async function inspectProduction(client, payload, backupDir, schemas) {
     blockers,
     databaseColumns,
     missingSchema,
+    schemaDestinationValidation,
+    mediaInfrastructure: {
+      filesTable: mediaInfrastructure.filesTable,
+      relationTables: mediaInfrastructure.relationTables,
+      validation: mediaInfrastructureValidation,
+    },
+    categoryMediaValidation: {
+      relationsChecked: categoryMediaValidation.relationsChecked,
+      mismatchCount: categoryMediaMismatches.length,
+    },
+    projectedCulturalMediaValidation,
     counts: {
       experienceRows: experiences.length,
       experienceFamilies: new Set(experiences.map((row) => row.document_id))
@@ -859,7 +1192,8 @@ async function inspectProduction(client, payload, backupDir, schemas) {
       destinationOrderLocalizationsToUpdate:
         destinationLocalizationsToUpdate.length,
       destinationPublications: destinationLocalizationsToUpdate.length,
-      mediaRegistrations: culturalMediaMatches.length === 0 ? 1 : 0,
+      mediaRegistrations:
+        projectedCulturalMediaValidation.projectedRegistration,
       duplicateUploads: 0,
       experienceChanges: 0,
       insightChanges: 0,
@@ -1263,14 +1597,22 @@ module.exports = {
   BLACK_PROHIBITED_PATTERNS,
   COMMON_CATEGORY_FIELDS,
   EXPECTED,
+  MEDIA_ATTRIBUTE_CONTRACTS,
+  MEDIA_RELATION_COLUMNS,
+  SCALAR_ATTRIBUTE_TYPES,
   SPECIFIC_CATEGORY_FIELDS,
+  UPLOAD_FILE_COLUMNS,
   buildLengthConstraints,
   buildLengthTargets,
   countPostgresCharacters,
   documentValuesMatch,
   findBlackProhibitedClaims,
   parseArgs,
+  validateCategoryMediaRelations,
+  validateMediaInfrastructure,
   verifyBackup,
   validatePayload,
   validatePlannedFieldLengths,
+  validateProjectedCulturalMedia,
+  validateSchemaDestinations,
 };
