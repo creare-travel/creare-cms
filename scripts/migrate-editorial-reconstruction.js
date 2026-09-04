@@ -51,7 +51,7 @@ const EXPECTED = {
   confirmation: "CREARE_EDITORIAL_RECONSTRUCTION_V1",
   experienceRows: 84,
   experienceFamilies: 14,
-  insightRows: 96,
+  insightRows: 102,
   mediaRows: 58,
 };
 const COMMON_CATEGORY_FIELDS = [
@@ -216,6 +216,17 @@ const FROZEN_TABLES = [
   "insights",
   "insights_destination_lnk",
 ];
+const DESTINATION_DOCUMENT_IDS = {
+  istanbul: "tuzsm8ft9rnsb2pz0pdcgiqc",
+  cappadocia: "v97gdhmnxy0t39jq51l2eo11",
+  bodrum: "qcmgbt6odv19gs26o203em8v",
+};
+const DESTINATION_RELATION_TABLES = [
+  "destinations_cmps",
+  "destinations_secondary_experiences_lnk",
+  "experiences_destination_lnk",
+  "insights_destination_lnk",
+];
 
 function usage() {
   console.log("Dry run:");
@@ -226,6 +237,10 @@ function usage() {
   console.log(
     "  npm run migrate:editorial-reconstruction -- --apply --backup-dir=/absolute/backup/path --expected-deployment-sha=<sha> --expected-deployment-id=<id> --confirm-production=CREARE_EDITORIAL_RECONSTRUCTION_V1",
   );
+  console.log("Rollback-only rehearsal (requires the same production guards):");
+  console.log(
+    "  npm run migrate:editorial-reconstruction -- --rehearse --backup-dir=/absolute/backup/path --expected-deployment-sha=<sha> --expected-deployment-id=<id> --confirm-production=CREARE_EDITORIAL_RECONSTRUCTION_V1",
+  );
 }
 
 function parseArgs(argv) {
@@ -235,6 +250,8 @@ function parseArgs(argv) {
       options.mode = options.mode ? "invalid" : "dry-run";
     else if (arg === "--apply")
       options.mode = options.mode ? "invalid" : "apply";
+    else if (arg === "--rehearse")
+      options.mode = options.mode ? "invalid" : "rehearse";
     else if (arg.startsWith("--backup-dir="))
       options.backupDir = arg.slice("--backup-dir=".length);
     else if (arg.startsWith("--expected-deployment-sha="))
@@ -249,7 +266,10 @@ function parseArgs(argv) {
       options.confirmProduction = arg.slice("--confirm-production=".length);
     else throw new Error(`Unknown argument: ${arg}`);
   }
-  if (!new Set(["dry-run", "apply"]).has(options.mode) || !options.backupDir) {
+  if (
+    !new Set(["dry-run", "apply", "rehearse"]).has(options.mode) ||
+    !options.backupDir
+  ) {
     usage();
     throw new Error("Choose exactly one mode and provide --backup-dir.");
   }
@@ -261,6 +281,230 @@ const sha256Buffer = (value) =>
 const sha256File = (filePath) => sha256Buffer(fs.readFileSync(filePath));
 const stableHash = (value) => sha256Buffer(JSON.stringify(value));
 const countPostgresCharacters = (value) => Array.from(value).length;
+
+function canonicalizeTimestamp(value) {
+  if (value instanceof Date)
+    return { $timestampMicroseconds: String(BigInt(value.valueOf()) * 1000n) };
+  const match = value.match(
+    /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})(?:\.(\d{1,6}))?(Z|[+-]\d{2}:?\d{2})?$/u,
+  );
+  if (!match) return null;
+  const milliseconds = Date.parse(`${match[1]}T${match[2]}${match[4] || "Z"}`);
+  if (Number.isNaN(milliseconds)) return null;
+  const microseconds = BigInt((match[3] || "").padEnd(6, "0") || "0");
+  return {
+    $timestampMicroseconds: String(BigInt(milliseconds) * 1000n + microseconds),
+  };
+}
+
+function canonicalizeDatabaseValue(value, fieldName = "") {
+  if (value === null || typeof value === "boolean") return value;
+  if (value instanceof Date) return canonicalizeTimestamp(value);
+  if (Buffer.isBuffer(value)) return { $bytes: value.toString("base64") };
+  if (Array.isArray(value))
+    return value.map((item) => canonicalizeDatabaseValue(item));
+  if (typeof value === "number") {
+    if (Number.isSafeInteger(value)) return { $safeInteger: String(value) };
+    return { $number: String(value) };
+  }
+  if (typeof value === "string") {
+    if (/^-?(0|[1-9]\d*)$/u.test(value)) {
+      const parsed = Number(value);
+      if (Number.isSafeInteger(parsed) && String(parsed) === value)
+        return { $safeInteger: value };
+    }
+    if (/_at$/u.test(fieldName)) {
+      const timestamp = canonicalizeTimestamp(value);
+      if (timestamp) return timestamp;
+    }
+    if (/^\s*[\[{]/u.test(value)) {
+      try {
+        return canonicalizeDatabaseValue(JSON.parse(value));
+      } catch {}
+    }
+    return value;
+  }
+  if (typeof value === "object")
+    return Object.fromEntries(
+      Object.keys(value)
+        .sort()
+        .map((key) => [key, canonicalizeDatabaseValue(value[key], key)]),
+    );
+  return value;
+}
+
+function canonicalizeDatabaseRows(rows) {
+  return [...rows]
+    .sort((left, right) =>
+      String(left.id).localeCompare(String(right.id), "en", { numeric: true }),
+    )
+    .map((row) =>
+      Object.fromEntries(
+        Object.keys(row)
+          .sort()
+          .map((field) => [
+            field,
+            canonicalizeDatabaseValue(row[field], field),
+          ]),
+      ),
+    );
+}
+
+function compareFrozenTableSnapshots(before, after) {
+  const mismatches = [];
+  for (const table of FROZEN_TABLES) {
+    const beforeRows = canonicalizeDatabaseRows(before[table] || []);
+    const afterRows = canonicalizeDatabaseRows(after[table] || []);
+    if (stableHash(beforeRows) !== stableHash(afterRows))
+      mismatches.push({
+        table,
+        beforeCount: beforeRows.length,
+        afterCount: afterRows.length,
+        beforeHash: stableHash(beforeRows),
+        afterHash: stableHash(afterRows),
+      });
+  }
+  return mismatches;
+}
+
+async function snapshotFrozenTables(connection) {
+  const snapshot = {};
+  for (const table of FROZEN_TABLES)
+    snapshot[table] = await connection(table).select("*").orderBy("id");
+  return snapshot;
+}
+
+function frozenMutationStatements(queries) {
+  return queries.filter(({ sql }) => {
+    if (
+      !/^\s*(INSERT|UPDATE|DELETE|MERGE|ALTER|CREATE|DROP|TRUNCATE)\b/iu.test(
+        sql,
+      )
+    )
+      return false;
+    return FROZEN_TABLES.some((table) =>
+      new RegExp(`(?:"${table}"|\\b${table}\\b)`, "iu").test(sql),
+    );
+  });
+}
+
+function publicationStatus(row) {
+  return row.published_at ? "published" : "draft";
+}
+
+function buildDestinationOrderPlan(rows, desiredOrder) {
+  const expectedKeys = new Set();
+  const desiredBySlug = new Map(
+    desiredOrder.map(({ slug, order_index }) => [slug, order_index]),
+  );
+  if (
+    desiredBySlug.size !== Object.keys(DESTINATION_DOCUMENT_IDS).length ||
+    [...desiredBySlug.keys()].some(
+      (slug) => !Object.hasOwn(DESTINATION_DOCUMENT_IDS, slug),
+    )
+  )
+    throw new Error("Destination order allowlist differs from approval.");
+  for (const slug of desiredBySlug.keys())
+    for (const locale of EXPECTED.locales)
+      for (const status of ["draft", "published"])
+        expectedKeys.add(`${slug}:${locale}:${status}`);
+  if (rows.length !== expectedKeys.size)
+    throw new Error(
+      `Destination target row count is ${rows.length}, expected ${expectedKeys.size}.`,
+    );
+
+  const seen = new Set();
+  const updates = [];
+  for (const row of rows) {
+    const key = `${row.slug}:${row.locale}:${publicationStatus(row)}`;
+    if (!expectedKeys.has(key))
+      throw new Error(`Unexpected Destination identity: ${key}.`);
+    if (seen.has(key))
+      throw new Error(`Duplicate Destination identity: ${key}.`);
+    seen.add(key);
+    if (row.document_id !== DESTINATION_DOCUMENT_IDS[row.slug])
+      throw new Error(`Destination document identity differs: ${key}.`);
+    const desired = desiredBySlug.get(row.slug);
+    if (row.order_index !== desired)
+      updates.push({
+        id: row.id,
+        document_id: row.document_id,
+        slug: row.slug,
+        locale: row.locale,
+        status: publicationStatus(row),
+        previous_order_index: row.order_index,
+        data: { order_index: desired },
+      });
+  }
+  const missing = [...expectedKeys].filter((key) => !seen.has(key));
+  if (missing.length > 0)
+    throw new Error(`Missing Destination identity: ${missing[0]}.`);
+  return { targetRows: rows.length, updates };
+}
+
+function assertAffectedRowCount(affected, update) {
+  if (
+    !Array.isArray(affected) ||
+    affected.length !== 1 ||
+    affected[0].id !== update.id
+  )
+    throw new Error(
+      `Destination order update affected an unexpected row count for id ${update.id}.`,
+    );
+}
+
+async function snapshotDestinationState(connection) {
+  const rows = await connection("destinations").select("*").orderBy("id");
+  const relations = {};
+  for (const table of DESTINATION_RELATION_TABLES)
+    relations[table] = await connection(table).select("*").orderBy("id");
+  relations.destination_media = await connection("files_related_mph")
+    .select("*")
+    .where({ related_type: "api::destination.destination" })
+    .orderBy("id");
+  return { rows, relations };
+}
+
+function validateDestinationState(before, after, desiredOrder) {
+  const blockers = [];
+  const desiredBySlug = new Map(
+    desiredOrder.map(({ slug, order_index }) => [slug, order_index]),
+  );
+  const afterById = new Map(after.rows.map((row) => [row.id, row]));
+  if (before.rows.length !== after.rows.length)
+    blockers.push("Destination row count changed.");
+  for (const beforeRow of before.rows) {
+    const afterRow = afterById.get(beforeRow.id);
+    if (!afterRow) {
+      blockers.push(`Destination row ${beforeRow.id} disappeared.`);
+      continue;
+    }
+    for (const field of new Set([
+      ...Object.keys(beforeRow),
+      ...Object.keys(afterRow),
+    ])) {
+      const expected =
+        field === "order_index" && desiredBySlug.has(beforeRow.slug)
+          ? desiredBySlug.get(beforeRow.slug)
+          : beforeRow[field];
+      if (JSON.stringify(afterRow[field]) !== JSON.stringify(expected))
+        blockers.push(
+          `Destination row ${beforeRow.id} changed field ${field}.`,
+        );
+    }
+  }
+  for (const table of Object.keys(before.relations)) {
+    const beforeRows = before.relations[table] || [];
+    const afterRows = after.relations[table] || [];
+    if (
+      stableHash(beforeRows) !== stableHash(afterRows) ||
+      stableHash(canonicalizeDatabaseRows(beforeRows)) !==
+        stableHash(canonicalizeDatabaseRows(afterRows))
+    )
+      blockers.push(`Destination relation table changed: ${table}.`);
+  }
+  return blockers;
+}
 
 function verifyBackup(backupDir) {
   const manifestPath = path.join(backupDir, "SHA256SUMS");
@@ -1409,29 +1653,44 @@ async function applyCategories(strapi, payload, summary) {
   }
 }
 
-async function applyDestinationOrder(strapi, payload, summary) {
-  const service = strapi.documents("api::destination.destination");
-  for (const desired of payload.destinationOrder) {
-    const existing = await service.findFirst({
-      locale: "en",
-      status: "draft",
-      filters: { slug: desired.slug },
+async function applyDestinationOrder(transaction, payload, summary) {
+  const rows = await transaction("destinations")
+    .select("*")
+    .whereIn(
+      "slug",
+      payload.destinationOrder.map(({ slug }) => slug),
+    )
+    .orderBy("id");
+  const plan = buildDestinationOrderPlan(rows, payload.destinationOrder);
+  const changedLocalizations = new Set();
+  for (const update of plan.updates) {
+    let query = transaction("destinations").where({
+      id: update.id,
+      document_id: update.document_id,
+      slug: update.slug,
+      locale: update.locale,
+      order_index: update.previous_order_index,
     });
-    if (!existing)
-      throw new Error(`Destination family missing: ${desired.slug}`);
-    for (const locale of EXPECTED.locales) {
-      const result = await upsertLocalizedDocument(
-        service,
-        existing.documentId,
-        locale,
-        { order_index: desired.order_index },
-      );
-      if (result.changed) summary.destinationOrderLocalizationsChanged += 1;
-    }
+    query =
+      update.status === "draft"
+        ? query.whereNull("published_at")
+        : query.whereNotNull("published_at");
+    const affected = await query.update(update.data).returning("id");
+    assertAffectedRowCount(affected, update);
+    changedLocalizations.add(`${update.slug}:${update.locale}`);
   }
+  summary.destinationOrderRowsChanged = plan.updates.length;
+  summary.destinationOrderLocalizationsChanged = changedLocalizations.size;
 }
 
-async function assertAppliedState(strapi, payload, backupDir, mediaId) {
+async function assertAppliedState(
+  strapi,
+  payload,
+  frozenBefore,
+  destinationBefore,
+  mediaId,
+  transaction,
+) {
   const cultural = strapi.documents(
     "api::cultural-world-page.cultural-world-page",
   );
@@ -1484,12 +1743,22 @@ async function assertAppliedState(strapi, payload, backupDir, mediaId) {
             `Destination order assertion failed: ${desired.slug}:${locale}:${status}`,
           );
       }
-  const backupTables = loadBackupTables(backupDir);
-  for (const table of FROZEN_TABLES) {
-    const current = await strapi.db.connection(table).select("*").orderBy("id");
-    if (stableHash(current) !== stableHash(backupTables[table] || []))
-      throw new Error(`Frozen table changed inside transaction: ${table}`);
-  }
+  const frozenAfter = await snapshotFrozenTables(transaction);
+  const frozenMismatches = compareFrozenTableSnapshots(
+    frozenBefore,
+    frozenAfter,
+  );
+  if (frozenMismatches.length > 0)
+    throw new Error(
+      `Frozen table changed inside transaction: ${frozenMismatches[0].table}`,
+    );
+  const destinationAfter = await snapshotDestinationState(transaction);
+  const destinationBlockers = validateDestinationState(
+    destinationBefore,
+    destinationAfter,
+    payload.destinationOrder,
+  );
+  if (destinationBlockers.length > 0) throw new Error(destinationBlockers[0]);
   const files = await strapi.db.query("plugin::upload.file").findMany({});
   const mediaMatches = files.filter(
     (file) =>
@@ -1509,31 +1778,58 @@ async function runApply(options, payload, preflight, backupDir) {
   const strapi = createStrapi(dirs);
   const summary = {
     migration: "editorial-reconstruction-v1",
-    mode: "APPLY",
+    mode: options.mode === "rehearse" ? "REHEARSAL" : "APPLY",
     culturalWorldLocalizationsChanged: 0,
     categoryLocalizationsChanged: 0,
     destinationOrderLocalizationsChanged: 0,
+    destinationOrderRowsChanged: 0,
     mediaRecordsCreated: 0,
     experienceChanges: 0,
     insightChanges: 0,
     ruChanges: 0,
     transactionCommitted: false,
+    transactionRolledBack: false,
+    frozenMutationStatements: [],
     cleanupWarnings: [],
   };
+  const queryTrace = [];
+  const traceQuery = (query) => queryTrace.push({ sql: query.sql });
+  const rollbackOnly = new Error("CREARE_REHEARSAL_ROLLBACK");
   try {
     await strapi.load();
-    await strapi.db.transaction(async () => {
-      const media = await ensureCulturalHero(
-        strapi,
-        payload.culturalWorlds.media,
-      );
-      summary.mediaRecordsCreated = media.created ? 1 : 0;
-      await applyCulturalWorlds(strapi, payload, media.id, summary);
-      await applyCategories(strapi, payload, summary);
-      await applyDestinationOrder(strapi, payload, summary);
-      await assertAppliedState(strapi, payload, backupDir, media.id);
-    });
-    summary.transactionCommitted = true;
+    strapi.db.connection.on("query", traceQuery);
+    try {
+      await strapi.db.transaction(async ({ trx }) => {
+        const frozenBefore = await snapshotFrozenTables(trx);
+        const destinationBefore = await snapshotDestinationState(trx);
+        const media = await ensureCulturalHero(
+          strapi,
+          payload.culturalWorlds.media,
+        );
+        summary.mediaRecordsCreated = media.created ? 1 : 0;
+        await applyCulturalWorlds(strapi, payload, media.id, summary);
+        await applyCategories(strapi, payload, summary);
+        await applyDestinationOrder(trx, payload, summary);
+        await assertAppliedState(
+          strapi,
+          payload,
+          frozenBefore,
+          destinationBefore,
+          media.id,
+          trx,
+        );
+        summary.frozenMutationStatements = frozenMutationStatements(queryTrace);
+        if (summary.frozenMutationStatements.length > 0)
+          throw new Error("SQL attempted to mutate a frozen table.");
+        if (options.mode === "rehearse") throw rollbackOnly;
+      });
+      summary.transactionCommitted = true;
+    } catch (error) {
+      if (options.mode !== "rehearse" || error !== rollbackOnly) throw error;
+      summary.transactionRolledBack = true;
+    } finally {
+      strapi.db.connection.off("query", traceQuery);
+    }
   } finally {
     try {
       await strapi.destroy();
@@ -1587,7 +1883,7 @@ async function main() {
 if (require.main === module) {
   main().catch((error) => {
     console.error(
-      `Editorial reconstruction ${process.argv.includes("--apply") ? "apply" : "dry-run"} failed: ${error.message}`,
+      `Editorial reconstruction ${process.argv.includes("--apply") ? "apply" : process.argv.includes("--rehearse") ? "rehearsal" : "dry-run"} failed: ${error.message}`,
     );
     process.exitCode = 1;
   });
@@ -1602,13 +1898,20 @@ module.exports = {
   SCALAR_ATTRIBUTE_TYPES,
   SPECIFIC_CATEGORY_FIELDS,
   UPLOAD_FILE_COLUMNS,
+  assertAffectedRowCount,
+  buildDestinationOrderPlan,
   buildLengthConstraints,
   buildLengthTargets,
+  canonicalizeDatabaseRows,
+  canonicalizeDatabaseValue,
+  compareFrozenTableSnapshots,
   countPostgresCharacters,
   documentValuesMatch,
   findBlackProhibitedClaims,
+  frozenMutationStatements,
   parseArgs,
   validateCategoryMediaRelations,
+  validateDestinationState,
   validateMediaInfrastructure,
   verifyBackup,
   validatePayload,
