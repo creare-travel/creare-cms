@@ -125,6 +125,235 @@ function canonical(value) {
 const stableHash = (value) => sha256(JSON.stringify(canonical(value)));
 const statusOf = (row) => (row.published_at ? "published" : "draft");
 
+const INTEGER_DATABASE_TYPES = new Set(["smallint", "integer", "bigint"]);
+const JSON_DATABASE_TYPES = new Set(["json", "jsonb"]);
+const TIMESTAMP_WITHOUT_TIME_ZONE = "timestamp without time zone";
+
+function loadCertifiedBaseline(backupDir) {
+  return {
+    tables: JSON.parse(
+      fs.readFileSync(
+        path.join(backupDir, "db/all-production-tables.json"),
+        "utf8",
+      ),
+    ).tables,
+    schema: JSON.parse(
+      fs.readFileSync(path.join(backupDir, "db/schema-metadata.json"), "utf8"),
+    ),
+  };
+}
+
+function databaseColumnMap(schema) {
+  return new Map(
+    schema.columns.map((column) => [
+      `${column.table_name}.${column.column_name}`,
+      column,
+    ]),
+  );
+}
+
+function databasePrimaryKeyMap(schema) {
+  const primaryKeys = new Map();
+  for (const constraint of schema.constraints || []) {
+    const match = /^PRIMARY KEY \((.+)\)$/u.exec(constraint.definition || "");
+    if (!match) continue;
+    const columns = match[1]
+      .split(",")
+      .map((column) => column.trim().replace(/^"|"$/gu, ""));
+    primaryKeys.set(constraint.table_name, columns);
+  }
+  return primaryKeys;
+}
+
+function parseJsonContainer(value) {
+  if (typeof value !== "string") return value;
+  const text = value.trim();
+  if (
+    !(
+      (text.startsWith("{") && text.endsWith("}")) ||
+      (text.startsWith("[") && text.endsWith("]"))
+    )
+  ) {
+    return value;
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    return value;
+  }
+}
+
+function timestampMilliseconds(value) {
+  if (value instanceof Date) return value.getTime();
+  if (typeof value === "string") {
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? null : parsed;
+  }
+  return null;
+}
+
+function inferTimestampRepresentationOffset(
+  expectedTables,
+  currentTables,
+  columns,
+) {
+  const deltas = new Map();
+  let sampleCount = 0;
+  for (const [table, expectedRows] of Object.entries(expectedTables)) {
+    const currentRows = currentTables[table];
+    if (!currentRows) continue;
+    const currentById = new Map(
+      currentRows.map((row) => [String(row.id), row]),
+    );
+    for (const expected of expectedRows) {
+      const current = currentById.get(String(expected.id));
+      if (!current) continue;
+      for (const [columnName, expectedValue] of Object.entries(expected)) {
+        const metadata = columns.get(`${table}.${columnName}`);
+        if (metadata?.data_type !== TIMESTAMP_WITHOUT_TIME_ZONE) continue;
+        const currentValue = current[columnName];
+        const representationDiffers =
+          expectedValue instanceof Date !== currentValue instanceof Date;
+        if (!representationDiffers) continue;
+        const expectedMs = timestampMilliseconds(expectedValue);
+        const currentMs = timestampMilliseconds(currentValue);
+        if (expectedMs == null || currentMs == null) continue;
+        const delta = currentMs - expectedMs;
+        deltas.set(delta, (deltas.get(delta) || 0) + 1);
+        sampleCount += 1;
+      }
+    }
+  }
+  const ranked = [...deltas.entries()].sort(
+    (left, right) =>
+      right[1] - left[1] || Math.abs(left[0]) - Math.abs(right[0]),
+  );
+  const [candidate = 0, dominantCount = 0] = ranked[0] || [];
+  const credible =
+    candidate === 0 ||
+    (sampleCount >= 10 &&
+      dominantCount / sampleCount >= 0.9 &&
+      Math.abs(candidate) <= 14 * 60 * 60 * 1000 &&
+      candidate % (15 * 60 * 1000) === 0);
+  return {
+    offsetMs: credible ? candidate : 0,
+    sampleCount,
+    dominantCount,
+    distinctDeltaCount: deltas.size,
+    credible,
+  };
+}
+
+function normalizeInteger(value) {
+  if (typeof value === "bigint") return value.toString();
+  if (typeof value === "number" && Number.isSafeInteger(value))
+    return String(value);
+  if (typeof value === "string" && /^[-+]?\d+$/u.test(value)) {
+    try {
+      return BigInt(value).toString();
+    } catch {
+      return value;
+    }
+  }
+  return value;
+}
+
+function canonicalSemanticValue(value, metadata, side, timestampOffsetMs) {
+  if (value == null) return value;
+  if (metadata?.data_type?.startsWith("timestamp")) {
+    const milliseconds = timestampMilliseconds(value);
+    if (milliseconds == null) return canonical(value);
+    const adjusted =
+      side === "expected" && metadata.data_type === TIMESTAMP_WITHOUT_TIME_ZONE
+        ? milliseconds + timestampOffsetMs
+        : milliseconds;
+    return { $timestamp: new Date(adjusted).toISOString() };
+  }
+  if (JSON_DATABASE_TYPES.has(metadata?.data_type)) {
+    return { $json: canonical(parseJsonContainer(value)) };
+  }
+  if (INTEGER_DATABASE_TYPES.has(metadata?.data_type)) {
+    return { $integer: normalizeInteger(value) };
+  }
+  return canonical(value);
+}
+
+function semanticTableRows(
+  rows,
+  table,
+  columns,
+  primaryKeys,
+  side,
+  timestampOffsetMs,
+) {
+  const canonicalRows = rows.map((row) =>
+    Object.fromEntries(
+      Object.keys(row)
+        .sort()
+        .map((columnName) => [
+          columnName,
+          canonicalSemanticValue(
+            row[columnName],
+            columns.get(`${table}.${columnName}`),
+            side,
+            timestampOffsetMs,
+          ),
+        ]),
+    ),
+  );
+  const identityColumns =
+    primaryKeys.get(table) ||
+    (canonicalRows.every((row) => row.id != null) ? ["id"] : []);
+  return canonicalRows.sort((left, right) => {
+    const leftIdentity = identityColumns.length
+      ? identityColumns.map((column) => left[column])
+      : left;
+    const rightIdentity = identityColumns.length
+      ? identityColumns.map((column) => right[column])
+      : right;
+    return JSON.stringify(leftIdentity).localeCompare(
+      JSON.stringify(rightIdentity),
+      "en",
+      { numeric: true },
+    );
+  });
+}
+
+function buildSemanticComparison(expectedTables, currentTables, schema) {
+  const columns = databaseColumnMap(schema);
+  const primaryKeys = databasePrimaryKeyMap(schema);
+  const timestampProfile = inferTimestampRepresentationOffset(
+    expectedTables,
+    currentTables,
+    columns,
+  );
+  const compare = (table, expectedRows, currentRows) => {
+    const expectedSemantic = semanticTableRows(
+      expectedRows,
+      table,
+      columns,
+      primaryKeys,
+      "expected",
+      timestampProfile.offsetMs,
+    );
+    const currentSemantic = semanticTableRows(
+      currentRows,
+      table,
+      columns,
+      primaryKeys,
+      "current",
+      timestampProfile.offsetMs,
+    );
+    return {
+      equal: stableHash(expectedSemantic) === stableHash(currentSemantic),
+      rawEqual: stableHash(expectedRows) === stableHash(currentRows),
+      expectedHash: stableHash(expectedSemantic),
+      currentHash: stableHash(currentSemantic),
+    };
+  };
+  return { compare, timestampProfile };
+}
+
 function parseArgs(argv) {
   const options = {
     mode: null,
@@ -168,8 +397,18 @@ function extractNumbers(value) {
   );
 }
 
-function validateRecordPayload(record, tables, blockers, warnings) {
+function validateRecordPayload(
+  record,
+  tables,
+  certifiedTables,
+  semanticComparison,
+  blockers,
+  warnings,
+) {
   const rows = tables[record.table].filter(
+    (row) => row.document_id === record.documentId,
+  );
+  const certifiedRows = certifiedTables[record.table].filter(
     (row) => row.document_id === record.documentId,
   );
   const enRows = rows.filter((row) => row.locale === "en");
@@ -180,19 +419,46 @@ function validateRecordPayload(record, tables, blockers, warnings) {
   }
   if (ruRows.length !== 0)
     blockers.push(`${record.documentId}: unexpected RU localization exists`);
+  const certifiedProtectedFamily = certifiedRows.filter((row) =>
+    ["en", "tr-TR", "zh-CN"].includes(row.locale),
+  );
+  const currentProtectedFamily = rows.filter((row) =>
+    ["en", "tr-TR", "zh-CN"].includes(row.locale),
+  );
+  if (stableHash(certifiedProtectedFamily) !== record.protectedFamilyHash) {
+    blockers.push(
+      `${record.documentId}: certified protected family integrity mismatch`,
+    );
+  }
   if (
-    stableHash(
-      rows.filter((row) => ["en", "tr-TR", "zh-CN"].includes(row.locale)),
-    ) !== record.protectedFamilyHash
+    !semanticComparison.compare(
+      record.table,
+      certifiedProtectedFamily,
+      currentProtectedFamily,
+    ).equal
   ) {
     blockers.push(`${record.documentId}: protected EN/TR/ZH family drift`);
   }
   for (const source of record.sourceRows) {
-    const actual = enRows.find(
-      (row) => row.id === source.id && statusOf(row) === source.status,
+    const certified = certifiedRows.find(
+      (row) =>
+        row.locale === "en" &&
+        row.id === source.id &&
+        statusOf(row) === source.status,
     );
-    if (!actual || stableHash(actual) !== source.hash)
+    if (!certified || stableHash(certified) !== source.hash) {
+      blockers.push(
+        `${record.documentId}:${source.status}: certified EN source integrity mismatch`,
+      );
+      continue;
+    }
+    const actual = enRows.filter((row) => statusOf(row) === source.status);
+    if (
+      actual.length !== 1 ||
+      !semanticComparison.compare(record.table, [certified], actual).equal
+    ) {
       blockers.push(`${record.documentId}:${source.status}: EN source drift`);
+    }
   }
   if (record.identity) {
     for (const row of enRows)
@@ -316,10 +582,20 @@ async function readAllTables(client) {
   return tables;
 }
 
-function validateState(payload, tables) {
+function validateState(
+  payload,
+  tables,
+  certifiedBaseline = loadCertifiedBaseline(payload.metadata.backupDir),
+) {
   const blockers = [];
   const warnings = [];
   const counters = { values: 0, leaves: 0 };
+  const semanticComparison = buildSemanticComparison(
+    certifiedBaseline.tables,
+    tables,
+    certifiedBaseline.schema,
+  );
+  const representationNormalizedTables = [];
   const localeCodes = tables.i18n_locale.map((row) => row.code).sort();
   if (stableHash(localeCodes) !== stableHash(["en", "ru-RU", "tr-TR", "zh-CN"]))
     blockers.push(`locale set differs: ${localeCodes}`);
@@ -335,11 +611,36 @@ function validateState(payload, tables) {
   for (const [table, expectedHash] of Object.entries(
     payload.baseline.protectedTableHashes,
   )) {
-    if (!tables[table] || stableHash(tables[table]) !== expectedHash)
+    const certifiedRows = certifiedBaseline.tables[table];
+    const currentRows = tables[table];
+    if (!certifiedRows || stableHash(certifiedRows) !== expectedHash) {
+      blockers.push(`certified backup integrity mismatch: ${table}`);
+      continue;
+    }
+    if (!currentRows) {
+      blockers.push(`protected baseline table missing: ${table}`);
+      continue;
+    }
+    const comparison = semanticComparison.compare(
+      table,
+      certifiedRows,
+      currentRows,
+    );
+    if (!comparison.equal) {
       blockers.push(`protected baseline drift: ${table}`);
+    } else if (!comparison.rawEqual) {
+      representationNormalizedTables.push(table);
+    }
   }
   for (const record of payload.records) {
-    validateRecordPayload(record, tables, blockers, warnings);
+    validateRecordPayload(
+      record,
+      tables,
+      certifiedBaseline.tables,
+      semanticComparison,
+      blockers,
+      warnings,
+    );
     const schema = JSON.parse(
       fs.readFileSync(path.join(ROOT, record.schema), "utf8"),
     );
@@ -358,7 +659,20 @@ function validateState(payload, tables) {
   for (const token of ["SIGNATURE™", "LAB™", "BLACK™"])
     if (!categoryText.includes(token))
       blockers.push(`protected category token missing: ${token}`);
-  return { blockers, warnings, counters };
+  return {
+    blockers,
+    warnings,
+    counters,
+    representationDiagnostics: {
+      timestampProfile: semanticComparison.timestampProfile,
+      normalizedTableCount: representationNormalizedTables.length,
+      normalizedTables: representationNormalizedTables,
+      rawRepresentationDiffers: representationNormalizedTables.length > 0,
+      canonicalSemanticValuesEqual:
+        representationNormalizedTables.length > 0 &&
+        !blockers.some((blocker) => blocker.includes("baseline drift")),
+    },
+  };
 }
 
 function projection(payload) {
@@ -757,7 +1071,7 @@ async function assertAppliedProjection(trx, payload) {
   }
 }
 
-async function runDryRun(options, payload) {
+async function runDryRun(options, payload, certifiedBaseline) {
   const connectionString =
     process.env.DATABASE_PUBLIC_URL || process.env.DATABASE_URL;
   if (!connectionString)
@@ -776,7 +1090,7 @@ async function runDryRun(options, payload) {
       )
     ).rows[0].value;
     const before = await readAllTables(client);
-    const validation = validateState(payload, before);
+    const validation = validateState(payload, before, certifiedBaseline);
     const after = await readAllTables(client);
     const changed = Object.keys(before).filter(
       (table) => stableHash(before[table]) !== stableHash(after[table]),
@@ -796,6 +1110,7 @@ async function runDryRun(options, payload) {
       lengthValuesChecked: validation.counters.values,
       nestedTextLeavesChecked: validation.counters.leaves,
       warnings: validation.warnings,
+      representationDiagnostics: validation.representationDiagnostics,
       blockerCount: validation.blockers.length,
       blockers: validation.blockers,
       transactionTableChanges: changed,
@@ -813,7 +1128,7 @@ async function runDryRun(options, payload) {
   return report;
 }
 
-async function runApply(options, payload) {
+async function runApply(options, payload, certifiedBaseline) {
   if (options.confirmation !== APPLY_CONFIRMATION)
     throw new Error("Exact production confirmation is required.");
   if (process.env.NODE_ENV !== "production")
@@ -832,12 +1147,14 @@ async function runApply(options, payload) {
     await strapi.load();
     await strapi.db.transaction(async ({ trx }) => {
       const before = {};
-      for (const [table, expectedHash] of Object.entries(
-        payload.baseline.protectedTableHashes,
-      )) {
+      for (const table of Object.keys(payload.baseline.protectedTableHashes)) {
         before[table] = await trx(table).select("*").orderBy("id");
-        if (stableHash(before[table]) !== expectedHash)
-          throw new Error(`Protected baseline drift: ${table}`);
+      }
+      const preflight = validateState(payload, before, certifiedBaseline);
+      if (preflight.blockers.length) {
+        throw new Error(
+          `Apply preflight blocked: ${preflight.blockers.join("; ")}`,
+        );
       }
       await applyDocuments(strapi, payload, summary);
       await replaceExperienceRelations(trx, payload);
@@ -888,10 +1205,11 @@ async function main() {
     payload.metadata.sourcePackageSha256
   )
     throw new Error("RU V5 package hash differs.");
+  const certifiedBaseline = loadCertifiedBaseline(options.backupDir);
   const report =
     options.mode === "dry-run"
-      ? await runDryRun(options, payload)
-      : await runApply(options, payload);
+      ? await runDryRun(options, payload, certifiedBaseline)
+      : await runApply(options, payload, certifiedBaseline);
   const text = `${JSON.stringify(report, null, 2)}\n`;
   if (options.resultPath) {
     fs.writeFileSync(options.resultPath, text, { mode: 0o600 });
@@ -909,9 +1227,11 @@ if (require.main === module) {
 
 module.exports = {
   assertAppliedProjection,
+  buildSemanticComparison,
   buildDocumentData,
   expectedPostApplyCounts,
   extractNumbers,
+  loadCertifiedBaseline,
   parseArgs,
   projection,
   replaceExperienceRelations,
