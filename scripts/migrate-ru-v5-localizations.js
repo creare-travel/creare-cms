@@ -126,8 +126,15 @@ const stableHash = (value) => sha256(JSON.stringify(canonical(value)));
 const statusOf = (row) => (row.published_at ? "published" : "draft");
 
 const INTEGER_DATABASE_TYPES = new Set(["smallint", "integer", "bigint"]);
+const NUMERIC_DATABASE_TYPES = new Set([
+  "numeric",
+  "decimal",
+  "real",
+  "double precision",
+]);
 const JSON_DATABASE_TYPES = new Set(["json", "jsonb"]);
 const TIMESTAMP_WITHOUT_TIME_ZONE = "timestamp without time zone";
+const PROTECTED_BASELINE_VALIDATOR_ID = "canonical-protected-baseline-v2";
 
 function loadCertifiedBaseline(backupDir) {
   return {
@@ -258,6 +265,31 @@ function normalizeInteger(value) {
   return value;
 }
 
+function normalizeNumeric(value) {
+  if (typeof value !== "string" && typeof value !== "number") return value;
+  const text = String(value);
+  const match = /^([+-]?)(\d+)(?:\.(\d*))?(?:[eE]([+-]?\d+))?$/u.exec(text);
+  if (!match) return value;
+  const sign = match[1] === "-" ? "-" : "";
+  const whole = match[2];
+  const fraction = match[3] || "";
+  const exponent = Number(match[4] || 0);
+  const digits = `${whole}${fraction}`;
+  const decimalAt = whole.length + exponent;
+  let normalized;
+  if (decimalAt <= 0) normalized = `0.${"0".repeat(-decimalAt)}${digits}`;
+  else if (decimalAt >= digits.length)
+    normalized = `${digits}${"0".repeat(decimalAt - digits.length)}`;
+  else normalized = `${digits.slice(0, decimalAt)}.${digits.slice(decimalAt)}`;
+  const [integerPart, fractionPart = ""] = normalized.split(".");
+  const canonicalInteger = integerPart.replace(/^0+(?=\d)/u, "") || "0";
+  const canonicalFraction = fractionPart.replace(/0+$/u, "");
+  const magnitude = canonicalFraction
+    ? `${canonicalInteger}.${canonicalFraction}`
+    : canonicalInteger;
+  return magnitude === "0" ? "0" : `${sign}${magnitude}`;
+}
+
 function canonicalSemanticValue(value, metadata, side, timestampOffsetMs) {
   if (value == null) return value;
   if (metadata?.data_type?.startsWith("timestamp")) {
@@ -274,6 +306,9 @@ function canonicalSemanticValue(value, metadata, side, timestampOffsetMs) {
   }
   if (INTEGER_DATABASE_TYPES.has(metadata?.data_type)) {
     return { $integer: normalizeInteger(value) };
+  }
+  if (NUMERIC_DATABASE_TYPES.has(metadata?.data_type)) {
+    return { $numeric: normalizeNumeric(value) };
   }
   return canonical(value);
 }
@@ -672,6 +707,28 @@ function validateState(
         representationNormalizedTables.length > 0 &&
         !blockers.some((blocker) => blocker.includes("baseline drift")),
     },
+  };
+}
+
+function validateProtectedBaseline(payload, tables, certifiedBaseline) {
+  return validateState(payload, tables, certifiedBaseline);
+}
+
+function compareSameQuerySnapshots(before, after, schema) {
+  const comparison = buildSemanticComparison(before, after, schema);
+  const changedTables = [];
+  for (const [table, beforeRows] of Object.entries(before)) {
+    const beforeIds = new Set(beforeRows.map((row) => String(row.id)));
+    const existingAfterRows = (after[table] || []).filter((row) =>
+      beforeIds.has(String(row.id)),
+    );
+    if (!comparison.compare(table, beforeRows, existingAfterRows).equal) {
+      changedTables.push(table);
+    }
+  }
+  return {
+    changedTables,
+    timestampProfile: comparison.timestampProfile,
   };
 }
 
@@ -1090,7 +1147,11 @@ async function runDryRun(options, payload, certifiedBaseline) {
       )
     ).rows[0].value;
     const before = await readAllTables(client);
-    const validation = validateState(payload, before, certifiedBaseline);
+    const validation = validateProtectedBaseline(
+      payload,
+      before,
+      certifiedBaseline,
+    );
     const after = await readAllTables(client);
     const changed = Object.keys(before).filter(
       (table) => stableHash(before[table]) !== stableHash(after[table]),
@@ -1099,6 +1160,7 @@ async function runDryRun(options, payload, certifiedBaseline) {
     report = {
       migration: "ru-v5-localizations",
       mode: "DRY_RUN",
+      protectedBaselineValidator: PROTECTED_BASELINE_VALIDATOR_ID,
       transactionReadOnly: readOnly,
       rolledBack: true,
       writeAttempted: false,
@@ -1147,10 +1209,14 @@ async function runApply(options, payload, certifiedBaseline) {
     await strapi.load();
     await strapi.db.transaction(async ({ trx }) => {
       const before = {};
-      for (const table of Object.keys(payload.baseline.protectedTableHashes)) {
+      for (const table of Object.keys(certifiedBaseline.tables)) {
         before[table] = await trx(table).select("*").orderBy("id");
       }
-      const preflight = validateState(payload, before, certifiedBaseline);
+      const preflight = validateProtectedBaseline(
+        payload,
+        before,
+        certifiedBaseline,
+      );
       if (preflight.blockers.length) {
         throw new Error(
           `Apply preflight blocked: ${preflight.blockers.join("; ")}`,
@@ -1159,16 +1225,19 @@ async function runApply(options, payload, certifiedBaseline) {
       await applyDocuments(strapi, payload, summary);
       await replaceExperienceRelations(trx, payload);
       await assertAppliedProjection(trx, payload);
-      for (const [table, rows] of Object.entries(before)) {
-        const protectedIds = rows.map((row) => row.id);
-        const after = protectedIds.length
-          ? await trx(table)
-              .whereIn("id", protectedIds)
-              .select("*")
-              .orderBy("id")
-          : [];
-        if (stableHash(after) !== stableHash(rows))
-          throw new Error(`Existing protected rows changed: ${table}`);
+      const after = {};
+      for (const table of Object.keys(before)) {
+        after[table] = await trx(table).select("*").orderBy("id");
+      }
+      const snapshotComparison = compareSameQuerySnapshots(
+        before,
+        after,
+        certifiedBaseline.schema,
+      );
+      if (snapshotComparison.changedTables.length) {
+        throw new Error(
+          `Existing protected rows changed: ${snapshotComparison.changedTables.join(", ")}`,
+        );
       }
       const ruInsights = await trx("insights")
         .where({ locale: TARGET_LOCALE })
@@ -1178,6 +1247,7 @@ async function runApply(options, payload, certifiedBaseline) {
         throw new Error("RU Insights changed unexpectedly.");
     });
     summary.transactionCommitted = true;
+    summary.protectedBaselineValidator = PROTECTED_BASELINE_VALIDATOR_ID;
   } finally {
     try {
       await strapi.destroy();
@@ -1232,10 +1302,16 @@ module.exports = {
   expectedPostApplyCounts,
   extractNumbers,
   loadCertifiedBaseline,
+  normalizeNumeric,
   parseArgs,
+  PROTECTED_BASELINE_VALIDATOR_ID,
   projection,
+  compareSameQuerySnapshots,
   replaceExperienceRelations,
+  runApply,
+  runDryRun,
   stableHash,
+  validateProtectedBaseline,
   validateState,
   walkStrings,
 };

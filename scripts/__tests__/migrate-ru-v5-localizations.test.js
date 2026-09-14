@@ -27,6 +27,11 @@ const backupSchema = JSON.parse(
 );
 
 const clone = (value) => structuredClone(value);
+const payloadPath = path.join(root, "src/migrations/ru-v5-localizations.json");
+const payloadSha256 = require("node:crypto")
+  .createHash("sha256")
+  .update(fs.readFileSync(payloadPath))
+  .digest("hex");
 
 const semanticTestSchema = {
   columns: [
@@ -64,8 +69,46 @@ function compareSample(expected, current) {
 }
 
 test("certified baseline has no blockers", () => {
-  const result = migration.validateState(payload, backup.tables);
+  const result = migration.validateProtectedBaseline(payload, backup.tables, {
+    tables: backup.tables,
+    schema: backupSchema,
+  });
   assert.deepEqual(result.blockers, []);
+});
+
+test("frozen RU payload remains byte-identical", () => {
+  assert.equal(
+    payloadSha256,
+    "c36ba025eb30f25997d0b69d8cbbea2b33b5ee61e1f7a12a6f07278926719f01",
+  );
+});
+
+test("dry-run and apply use the same protected-baseline validator", () => {
+  assert.equal(
+    migration.PROTECTED_BASELINE_VALIDATOR_ID,
+    "canonical-protected-baseline-v2",
+  );
+  assert.match(
+    migration.runDryRun.toString(),
+    /validateProtectedBaseline\s*\(/u,
+  );
+  assert.match(
+    migration.runApply.toString(),
+    /validateProtectedBaseline\s*\(/u,
+  );
+});
+
+test("apply preflight validator is exercised by the dry-run path", () => {
+  const tables = clone(backup.tables);
+  tables.audience_segments[0].slug = "unauthorized-drift";
+  const result = migration.validateProtectedBaseline(payload, tables, {
+    tables: backup.tables,
+    schema: backupSchema,
+  });
+  assert.match(
+    result.blockers.join("\n"),
+    /protected baseline drift: audience_segments/u,
+  );
 });
 
 test("container UTC timestamp representation equals certified ISO text", () => {
@@ -101,6 +144,81 @@ test("container UTC timestamp representation equals certified ISO text", () => {
   );
 });
 
+test("driver representation differences in the four reported tables are equivalent", () => {
+  const tables = clone(backup.tables);
+  const columns = new Map(
+    backupSchema.columns.map((column) => [
+      `${column.table_name}.${column.column_name}`,
+      column,
+    ]),
+  );
+  const affected = new Set([
+    "audience_segments",
+    "experience_types",
+    "files",
+    "moods",
+  ]);
+  for (const [table, rows] of Object.entries(tables)) {
+    for (const row of rows) {
+      for (const [column, value] of Object.entries(row)) {
+        const metadata = columns.get(`${table}.${column}`);
+        if (
+          typeof value === "string" &&
+          metadata?.data_type === "timestamp without time zone"
+        ) {
+          row[column] = new Date(Date.parse(value) + 3 * 60 * 60 * 1000);
+        } else if (
+          affected.has(table) &&
+          typeof value === "string" &&
+          ["json", "jsonb"].includes(metadata?.data_type) &&
+          /^[{[]/u.test(value.trim())
+        ) {
+          row[column] = JSON.parse(value);
+        } else if (
+          affected.has(table) &&
+          typeof value === "string" &&
+          ["numeric", "decimal", "real", "double precision"].includes(
+            metadata?.data_type,
+          )
+        ) {
+          row[column] = Number(value);
+        }
+      }
+    }
+  }
+  const result = migration.validateProtectedBaseline(payload, tables, {
+    tables: backup.tables,
+    schema: backupSchema,
+  });
+  assert.deepEqual(result.blockers, []);
+  for (const table of affected) {
+    assert.ok(
+      result.representationDiagnostics.normalizedTables.includes(table),
+    );
+  }
+});
+
+test("numeric representation normalization does not hide real value drift", () => {
+  const tables = clone(backup.tables);
+  tables.audience_segments[0].confidence_score =
+    Number(tables.audience_segments[0].confidence_score) + 0.01;
+  const result = migration.validateProtectedBaseline(payload, tables, {
+    tables: backup.tables,
+    schema: backupSchema,
+  });
+  assert.match(
+    result.blockers.join("\n"),
+    /protected baseline drift: audience_segments/u,
+  );
+});
+
+test("numeric representations normalize losslessly", () => {
+  assert.equal(migration.normalizeNumeric("001.2300"), "1.23");
+  assert.equal(migration.normalizeNumeric(1.23), "1.23");
+  assert.equal(migration.normalizeNumeric("1.23e2"), "123");
+  assert.equal(migration.normalizeNumeric("-0.000"), "0");
+});
+
 test("timestamp representation normalization does not hide real drift", () => {
   const expected = Array.from({ length: 12 }, (_, index) => ({
     id: index + 1,
@@ -115,6 +233,50 @@ test("timestamp representation normalization does not hide real drift", () => {
   const result = compareSample(expected, current);
   assert.equal(result.timestampProfile.offsetMs, 3 * 60 * 60 * 1000);
   assert.equal(result.equal, false);
+});
+
+test("same-query snapshot comparison blocks value, row, timestamp and identity drift", () => {
+  const before = {
+    sample: [
+      {
+        id: 1,
+        happened_at: new Date("2026-09-13T12:00:00.000Z"),
+        payload: { nested: "stable" },
+      },
+    ],
+  };
+  assert.deepEqual(
+    migration.compareSameQuerySnapshots(
+      before,
+      clone(before),
+      semanticTestSchema,
+    ).changedTables,
+    [],
+  );
+
+  const mutations = [
+    (tables) => {
+      tables.sample[0].payload.nested = "changed";
+    },
+    (tables) => {
+      tables.sample = [];
+    },
+    (tables) => {
+      tables.sample[0].happened_at = new Date("2026-09-13T12:00:00.001Z");
+    },
+    (tables) => {
+      tables.sample[0].id = 2;
+    },
+  ];
+  for (const mutate of mutations) {
+    const after = clone(before);
+    mutate(after);
+    assert.deepEqual(
+      migration.compareSameQuerySnapshots(before, after, semanticTestSchema)
+        .changedTables,
+      ["sample"],
+    );
+  }
 });
 
 test("equivalent JSONB object and array strings compare semantically", () => {
