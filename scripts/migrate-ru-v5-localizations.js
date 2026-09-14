@@ -314,6 +314,36 @@ function canonicalSemanticValue(value, metadata, side, timestampOffsetMs) {
   return canonical(value);
 }
 
+function databaseFieldValuesSemanticallyEqual(
+  table,
+  field,
+  expected,
+  actual,
+  schema,
+) {
+  const metadata = databaseColumnMap(schema).get(`${table}.${field}`);
+  if (!metadata) {
+    throw new Error(`Database schema metadata missing: ${table}.${field}`);
+  }
+  const expectedSemantic = canonicalSemanticValue(
+    expected,
+    metadata,
+    "current",
+    0,
+  );
+  const actualSemantic = canonicalSemanticValue(actual, metadata, "current", 0);
+  return stableHash(expectedSemantic) === stableHash(actualSemantic);
+}
+
+function databaseRowsSemanticallyEqual(table, expected, actual, schema) {
+  const comparison = buildSemanticComparison(
+    { [table]: expected },
+    { [table]: actual },
+    schema,
+  );
+  return comparison.compare(table, expected, actual).equal;
+}
+
 function semanticTableRows(
   rows,
   table,
@@ -337,9 +367,18 @@ function semanticTableRows(
         ]),
     ),
   );
+  const configuredIdentityColumns = primaryKeys.get(table) || [];
   const identityColumns =
-    primaryKeys.get(table) ||
-    (canonicalRows.every((row) => row.id != null) ? ["id"] : []);
+    configuredIdentityColumns.length &&
+    canonicalRows.every((row) =>
+      configuredIdentityColumns.every(
+        (column) => Object.hasOwn(row, column) && row[column] != null,
+      ),
+    )
+      ? configuredIdentityColumns
+      : canonicalRows.every((row) => row.id != null)
+        ? ["id"]
+        : [];
   return canonicalRows.sort((left, right) => {
     const leftIdentity = identityColumns.length
       ? identityColumns.map((column) => left[column])
@@ -807,6 +846,9 @@ function componentProjectionForRecord(record) {
     projections.push({
       field,
       componentCount,
+      componentType: attribute.component,
+      repeatable: Boolean(attribute.repeatable),
+      componentSchema,
       componentTable: componentSchema.collectionName,
       linkTable: `${contentTypeSchema.collectionName}_cmps`,
     });
@@ -958,6 +1000,17 @@ async function readAllTablesWithTransaction(trx) {
 function buildDocumentData(record) {
   const data = { ...record.sharedFields, ...record.fields };
   if (record.identity) data[record.identity.field] = record.identity.value;
+  for (const component of componentProjectionForRecord(record)) {
+    const sanitize = (item) =>
+      Object.fromEntries(
+        Object.keys(component.componentSchema.attributes)
+          .filter((field) => Object.hasOwn(item, field))
+          .map((field) => [field, item[field]]),
+      );
+    data[component.field] = component.repeatable
+      ? data[component.field].map(sanitize)
+      : sanitize(data[component.field]);
+  }
   const byField = new Map();
   for (const media of record.media) {
     if (!byField.has(media.field)) byField.set(media.field, []);
@@ -1117,7 +1170,69 @@ async function replaceExperienceRelations(trx, payload) {
   }
 }
 
-async function assertAppliedProjection(trx, payload, manifest, actualTables) {
+async function assertRecordComponents(trx, record, row, schema) {
+  const supplied = { ...record.sharedFields, ...record.fields };
+  for (const component of componentProjectionForRecord(record)) {
+    const value = supplied[component.field];
+    const expectedItems = component.repeatable ? value : [value];
+    const links = await trx(component.linkTable)
+      .where({ entity_id: row.id, field: component.field })
+      .select("cmp_id", "component_type", "field", "order")
+      .orderBy("order")
+      .orderBy("cmp_id");
+    if (links.length !== expectedItems.length) {
+      throw new Error(
+        `${record.documentId}:${statusOf(row)}: component count mismatch: ${component.field}`,
+      );
+    }
+    for (const [index, expectedItem] of expectedItems.entries()) {
+      const link = links[index];
+      if (
+        link.component_type !== component.componentType ||
+        link.field !== component.field ||
+        normalizeNumeric(link.order) !== normalizeNumeric(index + 1)
+      ) {
+        throw new Error(
+          `${record.documentId}:${statusOf(row)}: component link mismatch: ${component.field}.${index}`,
+        );
+      }
+      const actualItem = await trx(component.componentTable)
+        .where({ id: link.cmp_id })
+        .first();
+      if (!actualItem) {
+        throw new Error(
+          `${record.documentId}:${statusOf(row)}: component row missing: ${component.field}.${index}`,
+        );
+      }
+      for (const field of Object.keys(component.componentSchema.attributes)) {
+        const expected = Object.hasOwn(expectedItem, field)
+          ? expectedItem[field]
+          : null;
+        if (
+          !databaseFieldValuesSemanticallyEqual(
+            component.componentTable,
+            field,
+            expected,
+            actualItem[field],
+            schema,
+          )
+        ) {
+          throw new Error(
+            `${record.documentId}:${statusOf(row)}: component field mismatch: ${component.field}.${index}.${field}`,
+          );
+        }
+      }
+    }
+  }
+}
+
+async function assertAppliedProjection(
+  trx,
+  payload,
+  manifest,
+  actualTables,
+  schema,
+) {
   const actualCounts = Object.fromEntries(
     Object.entries(actualTables).map(([table, rows]) => [table, rows.length]),
   );
@@ -1125,6 +1240,9 @@ async function assertAppliedProjection(trx, payload, manifest, actualTables) {
   if (countBlockers.length) throw new Error(countBlockers.join("; "));
 
   for (const record of payload.records) {
+    const contentTypeSchema = JSON.parse(
+      fs.readFileSync(path.join(ROOT, record.schema), "utf8"),
+    );
     const rowsByStatus = await getRuRowsByStatus(
       trx,
       record.table,
@@ -1156,11 +1274,28 @@ async function assertAppliedProjection(trx, payload, manifest, actualTables) {
         ...record.sharedFields,
         ...record.fields,
       })) {
-        if (stableHash(row[field]) !== stableHash(expected))
+        const attribute = contentTypeSchema.attributes[field];
+        if (!attribute) {
+          throw new Error(
+            `${record.documentId}:${status}: schema field missing: ${field}`,
+          );
+        }
+        if (attribute.type === "component") continue;
+        if (
+          !databaseFieldValuesSemanticallyEqual(
+            record.table,
+            field,
+            expected,
+            row[field],
+            schema,
+          )
+        ) {
           throw new Error(
             `${record.documentId}:${status}: field mismatch: ${field}`,
           );
+        }
       }
+      await assertRecordComponents(trx, record, row, schema);
       for (const field of record.omittedExperienceFields) {
         if (row[field] != null)
           throw new Error(
@@ -1179,10 +1314,18 @@ async function assertAppliedProjection(trx, payload, manifest, actualTables) {
       const expectedMedia = record.media
         .map(({ fileId, field, order }) => ({ file_id: fileId, field, order }))
         .sort((a, b) => a.field.localeCompare(b.field) || a.order - b.order);
-      if (stableHash(media) !== stableHash(expectedMedia))
+      if (
+        !databaseRowsSemanticallyEqual(
+          "files_related_mph",
+          expectedMedia,
+          media,
+          schema,
+        )
+      ) {
         throw new Error(
           `${record.documentId}:${status}: media relation mismatch`,
         );
+      }
     }
   }
 
@@ -1211,8 +1354,16 @@ async function assertAppliedProjection(trx, payload, manifest, actualTables) {
           experience_ord: item.order,
         });
       }
-      if (stableHash(destinations) !== stableHash(expectedDestinations))
+      if (
+        !databaseRowsSemanticallyEqual(
+          "experiences_destination_lnk",
+          expectedDestinations,
+          destinations,
+          schema,
+        )
+      ) {
         throw new Error(`${record.documentId}:${status}: destination mismatch`);
+      }
 
       const related = await trx("experiences_related_experiences_lnk")
         .where({ experience_id: row.id })
@@ -1228,21 +1379,28 @@ async function assertAppliedProjection(trx, payload, manifest, actualTables) {
           experience_ord: item.order,
         });
       }
-      if (stableHash(related) !== stableHash(expectedRelated))
+      if (
+        !databaseRowsSemanticallyEqual(
+          "experiences_related_experiences_lnk",
+          expectedRelated,
+          related,
+          schema,
+        )
+      ) {
         throw new Error(
           `${record.documentId}:${status}: related Experience mismatch`,
         );
+      }
 
       for (const [field, config] of Object.entries(ONTOLOGY_RELATIONS)) {
         const actual = await trx(config.table)
           .where({ experience_id: row.id })
-          .pluck(config.targetColumn);
-        const expected = relation.ontology[field].map(
-          (item) => item.sourceTargetId,
-        );
+          .select(config.targetColumn);
+        const expected = relation.ontology[field].map((item) => ({
+          [config.targetColumn]: item.sourceTargetId,
+        }));
         if (
-          stableHash(actual.sort((a, b) => a - b)) !==
-          stableHash(expected.sort((a, b) => a - b))
+          !databaseRowsSemanticallyEqual(config.table, expected, actual, schema)
         ) {
           throw new Error(`${record.documentId}:${status}: ${field} mismatch`);
         }
@@ -1334,6 +1492,50 @@ async function runDryRun(options, payload, certifiedBaseline) {
   return report;
 }
 
+function isExpectedTarnPoolAbort(error) {
+  return (
+    error instanceof Error &&
+    error.message === "aborted" &&
+    /tarn[/\\]dist[/\\](?:PendingOperation|Pool)/u.test(error.stack || "")
+  );
+}
+
+async function settleEventLoop() {
+  await new Promise((resolve) => setImmediate(resolve));
+}
+
+async function destroyStrapiSafely(strapi, summary) {
+  const asynchronousFailures = [];
+  const captureUnhandledRejection = (reason) => {
+    asynchronousFailures.push(
+      reason instanceof Error ? reason : new Error(String(reason)),
+    );
+  };
+  let directFailure = null;
+  process.on("unhandledRejection", captureUnhandledRejection);
+  try {
+    await settleEventLoop();
+    await strapi.destroy();
+    await settleEventLoop();
+  } catch (error) {
+    directFailure = error;
+    await settleEventLoop();
+  } finally {
+    process.off("unhandledRejection", captureUnhandledRejection);
+  }
+
+  const failures = [
+    ...(directFailure ? [directFailure] : []),
+    ...asynchronousFailures,
+  ];
+  const unexpected = failures.find((error) => !isExpectedTarnPoolAbort(error));
+  if (unexpected) throw unexpected;
+  if (failures.length) {
+    summary.cleanupWarning =
+      "Strapi closed after an expected Tarn connection-pool abort.";
+  }
+}
+
 async function runApply(options, payload, certifiedBaseline) {
   if (options.confirmation !== APPLY_CONFIRMATION)
     throw new Error("Exact production confirmation is required.");
@@ -1380,6 +1582,7 @@ async function runApply(options, payload, certifiedBaseline) {
         payload,
         expectedTableDeltaManifest,
         after,
+        certifiedBaseline.schema,
       );
       const snapshotComparison = compareSameQuerySnapshots(
         before,
@@ -1401,11 +1604,7 @@ async function runApply(options, payload, certifiedBaseline) {
     summary.transactionCommitted = true;
     summary.protectedBaselineValidator = PROTECTED_BASELINE_VALIDATOR_ID;
   } finally {
-    try {
-      await strapi.destroy();
-    } catch (error) {
-      summary.cleanupWarning = error.message;
-    }
+    await destroyStrapiSafely(strapi, summary);
   }
   return summary;
 }
@@ -1449,11 +1648,16 @@ if (require.main === module) {
 
 module.exports = {
   assertAppliedProjection,
+  assertRecordComponents,
   buildExpectedTableDeltaManifest,
   buildSemanticComparison,
+  databaseFieldValuesSemanticallyEqual,
+  databaseRowsSemanticallyEqual,
   buildDocumentData,
+  destroyStrapiSafely,
   expectedPostApplyCounts,
   extractNumbers,
+  isExpectedTarnPoolAbort,
   loadCertifiedBaseline,
   normalizeNumeric,
   parseArgs,

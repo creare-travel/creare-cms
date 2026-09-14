@@ -27,6 +27,42 @@ const backupSchema = JSON.parse(
 );
 
 const clone = (value) => structuredClone(value);
+
+function makeReadOnlyTrx(tables) {
+  return (table) => {
+    let rows = clone(tables[table] || []);
+    const builder = {
+      where(criteria) {
+        rows = rows.filter((row) =>
+          Object.entries(criteria).every(([key, value]) => row[key] === value),
+        );
+        return builder;
+      },
+      select(...fields) {
+        rows = rows.map((row) =>
+          Object.fromEntries(fields.map((field) => [field, row[field]])),
+        );
+        return builder;
+      },
+      orderBy(field) {
+        rows.sort((left, right) =>
+          String(left[field]).localeCompare(String(right[field]), "en", {
+            numeric: true,
+          }),
+        );
+        return builder;
+      },
+      first() {
+        return Promise.resolve(rows[0]);
+      },
+      then(resolve, reject) {
+        return Promise.resolve(rows).then(resolve, reject);
+      },
+    };
+    return builder;
+  };
+}
+
 const payloadPath = path.join(root, "src/migrations/ru-v5-localizations.json");
 const payloadSha256 = require("node:crypto")
   .createHash("sha256")
@@ -299,6 +335,98 @@ test("equivalent JSONB object and array strings compare semantically", () => {
   assert.equal(result.equal, true);
 });
 
+test("post-apply JSONB field validation accepts equivalent driver representations", () => {
+  const expected = [
+    { type: "paragraph", children: [{ type: "text", text: "Текст" }] },
+  ];
+  const actual = JSON.stringify(expected);
+  assert.equal(
+    migration.databaseFieldValuesSemanticallyEqual(
+      "sample",
+      "payload",
+      expected,
+      actual,
+      semanticTestSchema,
+    ),
+    true,
+  );
+  const changed = clone(expected);
+  changed[0].children[0].text = "Изменённый текст";
+  assert.equal(
+    migration.databaseFieldValuesSemanticallyEqual(
+      "sample",
+      "payload",
+      expected,
+      JSON.stringify(changed),
+      semanticTestSchema,
+    ),
+    false,
+  );
+});
+
+test("post-apply relation rows normalize database numeric representation", () => {
+  const schema = {
+    columns: [
+      {
+        table_name: "relation_sample",
+        column_name: "target_id",
+        data_type: "integer",
+      },
+      {
+        table_name: "relation_sample",
+        column_name: "order",
+        data_type: "double precision",
+      },
+    ],
+  };
+  assert.equal(
+    migration.databaseRowsSemanticallyEqual(
+      "relation_sample",
+      [
+        { target_id: 7, order: 1 },
+        { target_id: 9, order: 2 },
+      ],
+      [
+        { target_id: "9", order: "2.0" },
+        { target_id: "7", order: "1.0" },
+      ],
+      schema,
+    ),
+    true,
+  );
+});
+
+test("Strapi cleanup suppresses only the known Tarn pool abort", async () => {
+  const tarnAbort = new Error("aborted");
+  tarnAbort.stack =
+    "Error: aborted\n    at PendingOperation.abort (/app/node_modules/tarn/dist/PendingOperation.js:25:21)";
+  assert.equal(migration.isExpectedTarnPoolAbort(tarnAbort), true);
+  assert.equal(migration.isExpectedTarnPoolAbort(new Error("aborted")), false);
+
+  const summary = {};
+  await migration.destroyStrapiSafely(
+    {
+      async destroy() {
+        throw tarnAbort;
+      },
+    },
+    summary,
+  );
+  assert.match(summary.cleanupWarning, /expected Tarn connection-pool abort/u);
+
+  await assert.rejects(
+    migration.destroyStrapiSafely(
+      {
+        async destroy() {
+          throw new Error("unexpected cleanup failure");
+        },
+      },
+      {},
+    ),
+    /unexpected cleanup failure/u,
+  );
+});
+
 test("JSON object key order does not create semantic drift", () => {
   const expected = [
     { id: 1, happened_at: null, payload: { beta: 2, alpha: 1 } },
@@ -379,6 +507,32 @@ test("projection is exactly 22 drafts and 22 publications", () => {
   assert.equal(result.insightRelationsProjected, 0);
 });
 
+test("every supplied payload field is a database column or declared component", () => {
+  const columns = new Set(
+    backupSchema.columns.map(
+      (column) => `${column.table_name}.${column.column_name}`,
+    ),
+  );
+  for (const record of payload.records) {
+    const schema = JSON.parse(fs.readFileSync(path.join(root, record.schema)));
+    for (const field of Object.keys({
+      ...record.sharedFields,
+      ...record.fields,
+    })) {
+      const attribute = schema.attributes[field];
+      assert.ok(
+        attribute,
+        `${record.documentId}.${field} is absent from schema`,
+      );
+      assert.ok(
+        attribute.type === "component" ||
+          columns.has(`${record.table}.${field}`),
+        `${record.documentId}.${field} has no database storage contract`,
+      );
+    }
+  }
+});
+
 test("Destination component projection derives six rows for both storage tables", () => {
   const manifest = migration.buildExpectedTableDeltaManifest(payload);
   for (const table of [
@@ -390,6 +544,49 @@ test("Destination component projection derives six rows for both storage tables"
     assert.equal(manifest[table].expectedPostApplyCount, 48);
     assert.equal(manifest[table].sources.length, 3);
   }
+});
+
+test("post-apply Destination component content is validated semantically", async () => {
+  const record = payload.records.find(
+    (item) => item.contentType === "api::destination.destination",
+  );
+  const expected = record.fields.sections[0];
+  const row = { id: 9000, published_at: null };
+  const tables = {
+    destinations_cmps: [
+      {
+        entity_id: row.id,
+        cmp_id: 9100,
+        component_type: "destination.section",
+        field: "sections",
+        order: "1.0",
+      },
+    ],
+    components_destination_sections: [
+      {
+        ...clone(expected),
+        id: 9100,
+        section_number: String(expected.section_number),
+      },
+    ],
+  };
+  await migration.assertRecordComponents(
+    makeReadOnlyTrx(tables),
+    record,
+    row,
+    backupSchema,
+  );
+  tables.components_destination_sections[0].body +=
+    " Несогласованное изменение.";
+  await assert.rejects(
+    migration.assertRecordComponents(
+      makeReadOnlyTrx(tables),
+      record,
+      row,
+      backupSchema,
+    ),
+    /component field mismatch: sections\.0\.body/u,
+  );
 });
 
 test("missing or additional Destination component rows block projection", () => {
@@ -620,6 +817,20 @@ test("omitted Experience fields never enter document data", () => {
   ]) {
     assert.equal(Object.hasOwn(data, field), false);
   }
+});
+
+test("source component IDs never enter localized document data", () => {
+  const destination = payload.records.find(
+    (item) => item.contentType === "api::destination.destination",
+  );
+  assert.ok(destination.fields.sections[0].id);
+  const data = migration.buildDocumentData(destination);
+  assert.equal(Object.hasOwn(data.sections[0], "id"), false);
+  assert.deepEqual(Object.keys(data.sections[0]).sort(), [
+    "body",
+    "section_number",
+    "title",
+  ]);
 });
 
 test("required shared fields enter document data without altering the package", () => {
