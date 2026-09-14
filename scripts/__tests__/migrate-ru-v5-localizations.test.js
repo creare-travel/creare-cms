@@ -379,10 +379,96 @@ test("projection is exactly 22 drafts and 22 publications", () => {
   assert.equal(result.insightRelationsProjected, 0);
 });
 
+test("Destination component projection derives six rows for both storage tables", () => {
+  const manifest = migration.buildExpectedTableDeltaManifest(payload);
+  for (const table of [
+    "components_destination_sections",
+    "destinations_cmps",
+  ]) {
+    assert.equal(manifest[table].baselineCount, 42);
+    assert.equal(manifest[table].projectedDelta, 6);
+    assert.equal(manifest[table].expectedPostApplyCount, 48);
+    assert.equal(manifest[table].sources.length, 3);
+  }
+});
+
+test("missing or additional Destination component rows block projection", () => {
+  const manifest = migration.buildExpectedTableDeltaManifest(payload);
+  const actualCounts = Object.fromEntries(
+    Object.entries(manifest).map(([table, entry]) => [
+      table,
+      entry.expectedPostApplyCount,
+    ]),
+  );
+  for (const count of [47, 49]) {
+    const changed = { ...actualCounts, components_destination_sections: count };
+    assert.match(
+      migration.validateProjectedTableCounts(manifest, changed).join("\n"),
+      /components_destination_sections: expected 48 rows after apply/u,
+    );
+  }
+});
+
+test("complete RU V5 changed-table inventory is explicit", () => {
+  const manifest = migration.buildExpectedTableDeltaManifest(payload);
+  const changedTables = Object.entries(manifest)
+    .filter(([, entry]) => entry.projectedDelta !== 0)
+    .map(([table]) => table)
+    .sort();
+  assert.deepEqual(changedTables, [
+    "components_destination_sections",
+    "cultural_world_pages",
+    "destinations",
+    "destinations_cmps",
+    "experience_category_pages",
+    "experience_landings",
+    "experiences",
+    "experiences_audience_entity_lnk",
+    "experiences_destination_lnk",
+    "experiences_experience_type_entity_lnk",
+    "experiences_intensity_entity_lnk",
+    "experiences_mood_entity_lnk",
+    "experiences_related_experiences_lnk",
+    "files_related_mph",
+  ]);
+  assert.equal(Object.keys(manifest).length, 67);
+  assert.equal(manifest.insights.projectedDelta, 0);
+  assert.equal(manifest.experiences_insights_lnk.projectedDelta, 0);
+  assert.equal(manifest.experiences_related_insights_lnk.projectedDelta, 0);
+});
+
+test("unexpected changed table blocks projection", () => {
+  const manifest = migration.buildExpectedTableDeltaManifest(payload);
+  const actualCounts = Object.fromEntries(
+    Object.entries(manifest).map(([table, entry]) => [
+      table,
+      entry.expectedPostApplyCount,
+    ]),
+  );
+  actualCounts.unlisted_table = 1;
+  assert.match(
+    migration.validateProjectedTableCounts(manifest, actualCounts).join("\n"),
+    /unexpected changed table: unlisted_table/u,
+  );
+});
+
+test("dry-run and apply share the complete projection builder", () => {
+  assert.match(
+    migration.runDryRun.toString(),
+    /buildExpectedTableDeltaManifest\s*\(/u,
+  );
+  assert.match(
+    migration.runApply.toString(),
+    /buildExpectedTableDeltaManifest\s*\(/u,
+  );
+});
+
 test("post-apply counts include every projected media and relation row", () => {
   const counts = migration.expectedPostApplyCounts(payload);
   const projected = migration.projection(payload);
   assert.equal(counts.experiences - payload.baseline.counts.experiences, 28);
+  assert.equal(counts.components_destination_sections, 48);
+  assert.equal(counts.destinations_cmps, 48);
   assert.equal(
     counts.files_related_mph - payload.baseline.counts.files_related_mph,
     projected.mediaRelationRowsProjected,

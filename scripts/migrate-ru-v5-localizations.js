@@ -9,6 +9,7 @@ const ROOT = path.resolve(__dirname, "..");
 const PAYLOAD_PATH = path.join(ROOT, "src/migrations/ru-v5-localizations.json");
 const TARGET_LOCALE = "ru-RU";
 const APPLY_CONFIRMATION = "CREARE_RU_V5_LOCALIZATIONS";
+const LOCALIZATION_STATES = ["draft", "published"];
 const SYSTEM_FIELDS = new Set([
   "id",
   "documentId",
@@ -778,43 +779,180 @@ function projection(payload) {
   };
 }
 
-function expectedPostApplyCounts(payload) {
-  const counts = { ...payload.baseline.counts };
-  for (const [uid, table] of Object.entries(TABLES_BY_UID)) {
-    counts[table] +=
-      payload.records.filter((record) => record.contentType === uid).length * 2;
-  }
-  counts.files_related_mph += payload.records.reduce(
-    (sum, record) => sum + record.media.length * 2,
-    0,
+function componentProjectionForRecord(record) {
+  const contentTypeSchema = JSON.parse(
+    fs.readFileSync(path.join(ROOT, record.schema), "utf8"),
   );
+  const projections = [];
+  for (const [field, attribute] of Object.entries(
+    contentTypeSchema.attributes,
+  )) {
+    if (attribute.type !== "component") continue;
+    const value = { ...record.sharedFields, ...record.fields }[field];
+    const componentCount = attribute.repeatable
+      ? Array.isArray(value)
+        ? value.length
+        : 0
+      : value == null
+        ? 0
+        : 1;
+    if (!componentCount) continue;
+    const [category, component] = attribute.component.split(".");
+    const componentSchema = JSON.parse(
+      fs.readFileSync(
+        path.join(ROOT, "src/components", category, `${component}.json`),
+        "utf8",
+      ),
+    );
+    projections.push({
+      field,
+      componentCount,
+      componentTable: componentSchema.collectionName,
+      linkTable: `${contentTypeSchema.collectionName}_cmps`,
+    });
+  }
+  return projections;
+}
+
+function buildExpectedTableDeltaManifest(payload) {
+  const manifest = Object.fromEntries(
+    Object.entries(payload.baseline.counts)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([table, baselineCount]) => [
+        table,
+        {
+          baselineCount,
+          projectedDelta: 0,
+          expectedPostApplyCount: baselineCount,
+          sources: [],
+        },
+      ]),
+  );
+  const add = (table, count, source) => {
+    if (!Object.hasOwn(manifest, table)) {
+      throw new Error(`Projected table is absent from baseline: ${table}`);
+    }
+    manifest[table].projectedDelta += count;
+    manifest[table].expectedPostApplyCount += count;
+    manifest[table].sources.push(source);
+  };
+
+  for (const record of payload.records) {
+    add(
+      record.table,
+      LOCALIZATION_STATES.length,
+      `${record.documentId}:localized-content`,
+    );
+    for (const component of componentProjectionForRecord(record)) {
+      const count = component.componentCount * LOCALIZATION_STATES.length;
+      const source = `${record.documentId}.${component.field}:component`;
+      add(component.componentTable, count, source);
+      add(component.linkTable, count, `${source}-link`);
+    }
+    add(
+      "files_related_mph",
+      record.media.length * LOCALIZATION_STATES.length,
+      `${record.documentId}:media`,
+    );
+  }
+
   const experiences = payload.records.filter(
     (record) => record.contentType === "api::experience.experience",
   );
-  counts.experiences_destination_lnk += experiences.reduce(
-    (sum, record) =>
-      sum +
+  for (const record of experiences) {
+    add(
+      "experiences_destination_lnk",
       record.relations.draft.destination.length +
-      record.relations.published.destination.length,
-    0,
-  );
-  counts.experiences_related_experiences_lnk += experiences.reduce(
-    (sum, record) =>
-      sum +
+        record.relations.published.destination.length,
+      `${record.documentId}:destination`,
+    );
+    add(
+      "experiences_related_experiences_lnk",
       record.relations.draft.relatedExperiences.length +
-      record.relations.published.relatedExperiences.length,
-    0,
-  );
-  for (const [field, config] of Object.entries(ONTOLOGY_RELATIONS)) {
-    counts[config.table] += experiences.reduce(
-      (sum, record) =>
-        sum +
-        record.relations.draft.ontology[field].length +
-        record.relations.published.ontology[field].length,
-      0,
+        record.relations.published.relatedExperiences.length,
+      `${record.documentId}:related-experiences`,
     );
   }
-  return counts;
+  for (const [field, config] of Object.entries(ONTOLOGY_RELATIONS)) {
+    for (const record of experiences) {
+      add(
+        config.table,
+        record.relations.draft.ontology[field].length +
+          record.relations.published.ontology[field].length,
+        `${record.documentId}:${field}`,
+      );
+    }
+  }
+  return manifest;
+}
+
+function expectedPostApplyCounts(payload) {
+  return Object.fromEntries(
+    Object.entries(buildExpectedTableDeltaManifest(payload)).map(
+      ([table, entry]) => [table, entry.expectedPostApplyCount],
+    ),
+  );
+}
+
+function validateExpectedTableDeltaManifest(payload, tables, manifest) {
+  const blockers = [];
+  const baselineTables = Object.keys(payload.baseline.counts).sort();
+  const currentTables = Object.keys(tables).sort();
+  const manifestTables = Object.keys(manifest).sort();
+  if (stableHash(manifestTables) !== stableHash(baselineTables)) {
+    blockers.push("projection manifest does not cover every baseline table");
+  }
+  if (stableHash(currentTables) !== stableHash(baselineTables)) {
+    blockers.push("current table inventory differs from projection manifest");
+  }
+  for (const table of baselineTables) {
+    if (!manifest[table]) continue;
+    const actualCount = tables[table]?.length;
+    if (actualCount !== manifest[table].baselineCount) {
+      blockers.push(
+        `${table}: baseline count ${actualCount} differs from ${manifest[table].baselineCount}`,
+      );
+    }
+  }
+  return blockers;
+}
+
+function validateProjectedTableCounts(manifest, actualCounts) {
+  const blockers = [];
+  const expectedTables = Object.keys(manifest).sort();
+  const actualTables = Object.keys(actualCounts).sort();
+  if (stableHash(actualTables) !== stableHash(expectedTables)) {
+    const unexpected = actualTables.filter(
+      (table) => !Object.hasOwn(manifest, table),
+    );
+    const missing = expectedTables.filter(
+      (table) => !Object.hasOwn(actualCounts, table),
+    );
+    if (unexpected.length)
+      blockers.push(`unexpected changed table: ${unexpected.join(", ")}`);
+    if (missing.length)
+      blockers.push(`projected table missing: ${missing.join(", ")}`);
+  }
+  for (const [table, entry] of Object.entries(manifest)) {
+    if (!Object.hasOwn(actualCounts, table)) continue;
+    if (actualCounts[table] !== entry.expectedPostApplyCount) {
+      blockers.push(
+        `${table}: expected ${entry.expectedPostApplyCount} rows after apply, found ${actualCounts[table]}`,
+      );
+    }
+  }
+  return blockers;
+}
+
+async function readAllTablesWithTransaction(trx) {
+  const result = await trx.raw(
+    "SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname='public' ORDER BY tablename",
+  );
+  const tables = {};
+  for (const { tablename } of result.rows) {
+    tables[tablename] = await trx(tablename).select("*").orderBy("id");
+  }
+  return tables;
 }
 
 function buildDocumentData(record) {
@@ -979,15 +1117,12 @@ async function replaceExperienceRelations(trx, payload) {
   }
 }
 
-async function assertAppliedProjection(trx, payload) {
-  const expectedCounts = expectedPostApplyCounts(payload);
-  for (const [table, count] of Object.entries(expectedCounts)) {
-    const result = await trx(table).count({ count: "*" }).first();
-    if (Number(result.count) !== count)
-      throw new Error(
-        `${table}: expected ${count} rows after apply, found ${result.count}`,
-      );
-  }
+async function assertAppliedProjection(trx, payload, manifest, actualTables) {
+  const actualCounts = Object.fromEntries(
+    Object.entries(actualTables).map(([table, rows]) => [table, rows.length]),
+  );
+  const countBlockers = validateProjectedTableCounts(manifest, actualCounts);
+  if (countBlockers.length) throw new Error(countBlockers.join("; "));
 
   for (const record of payload.records) {
     const rowsByStatus = await getRuRowsByStatus(
@@ -1152,6 +1287,14 @@ async function runDryRun(options, payload, certifiedBaseline) {
       before,
       certifiedBaseline,
     );
+    const expectedTableDeltaManifest = buildExpectedTableDeltaManifest(payload);
+    validation.blockers.push(
+      ...validateExpectedTableDeltaManifest(
+        payload,
+        before,
+        expectedTableDeltaManifest,
+      ),
+    );
     const after = await readAllTables(client);
     const changed = Object.keys(before).filter(
       (table) => stableHash(before[table]) !== stableHash(after[table]),
@@ -1169,6 +1312,7 @@ async function runDryRun(options, payload, certifiedBaseline) {
         path.join(options.backupDir, "SHA256SUMS"),
       ),
       projection: projection(payload),
+      expectedTableDeltaManifest,
       lengthValuesChecked: validation.counters.values,
       nestedTextLeavesChecked: validation.counters.leaves,
       warnings: validation.warnings,
@@ -1208,14 +1352,20 @@ async function runApply(options, payload, certifiedBaseline) {
   try {
     await strapi.load();
     await strapi.db.transaction(async ({ trx }) => {
-      const before = {};
-      for (const table of Object.keys(certifiedBaseline.tables)) {
-        before[table] = await trx(table).select("*").orderBy("id");
-      }
+      const before = await readAllTablesWithTransaction(trx);
       const preflight = validateProtectedBaseline(
         payload,
         before,
         certifiedBaseline,
+      );
+      const expectedTableDeltaManifest =
+        buildExpectedTableDeltaManifest(payload);
+      preflight.blockers.push(
+        ...validateExpectedTableDeltaManifest(
+          payload,
+          before,
+          expectedTableDeltaManifest,
+        ),
       );
       if (preflight.blockers.length) {
         throw new Error(
@@ -1224,11 +1374,13 @@ async function runApply(options, payload, certifiedBaseline) {
       }
       await applyDocuments(strapi, payload, summary);
       await replaceExperienceRelations(trx, payload);
-      await assertAppliedProjection(trx, payload);
-      const after = {};
-      for (const table of Object.keys(before)) {
-        after[table] = await trx(table).select("*").orderBy("id");
-      }
+      const after = await readAllTablesWithTransaction(trx);
+      await assertAppliedProjection(
+        trx,
+        payload,
+        expectedTableDeltaManifest,
+        after,
+      );
       const snapshotComparison = compareSameQuerySnapshots(
         before,
         after,
@@ -1297,6 +1449,7 @@ if (require.main === module) {
 
 module.exports = {
   assertAppliedProjection,
+  buildExpectedTableDeltaManifest,
   buildSemanticComparison,
   buildDocumentData,
   expectedPostApplyCounts,
@@ -1307,11 +1460,14 @@ module.exports = {
   PROTECTED_BASELINE_VALIDATOR_ID,
   projection,
   compareSameQuerySnapshots,
+  readAllTablesWithTransaction,
   replaceExperienceRelations,
   runApply,
   runDryRun,
   stableHash,
   validateProtectedBaseline,
+  validateExpectedTableDeltaManifest,
+  validateProjectedTableCounts,
   validateState,
   walkStrings,
 };
